@@ -56,7 +56,8 @@ export default function Dashboard() {
             });
 
             if (!response.ok) {
-                throw new Error("Analysis failed");
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || `Analysis failed with status ${response.status}`);
             }
 
             const data: AnalysisResult = await response.json();
@@ -64,7 +65,7 @@ export default function Dashboard() {
             setUploadProgress(100);
         } catch (error) {
             console.error("Error analyzing file:", error);
-            alert("Failed to analyze file. Please try again.");
+            alert(`Error: ${error instanceof Error ? error.message : "An unknown error occurred"}`);
         } finally {
             clearInterval(progressInterval);
             setIsUploading(false);
@@ -98,7 +99,7 @@ export default function Dashboard() {
     return (
         <div className="flex min-h-screen flex-col bg-muted/20">
             <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b bg-background px-6 shadow-sm">
-                <h1 className="text-xl font-bold text-primary">HandaiGrade Dashboard</h1>
+                <h1 className="text-xl font-bold text-primary">成績ダッシュボード</h1>
                 <div className="ml-auto flex items-center gap-2">
                     <input
                         type="file"
@@ -109,7 +110,7 @@ export default function Dashboard() {
                     />
                     <Button size="sm" onClick={handleUploadClick} disabled={isUploading}>
                         {isUploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-                        {isUploading ? "Analyzing..." : "Upload Screenshots"}
+                        {isUploading ? "解析中..." : "スクショをアップロード"}
                     </Button>
                 </div>
             </header>
@@ -118,7 +119,7 @@ export default function Dashboard() {
                 {isUploading && (
                     <div className="mb-8 space-y-2">
                         <div className="flex items-center justify-between text-sm">
-                            <span className="text-muted-foreground">Analyzing your transcript...</span>
+                            <span className="text-muted-foreground">成績表を解析しています...</span>
                             <span className="font-medium">{uploadProgress}%</span>
                         </div>
                         <Progress value={uploadProgress} className="h-2" />
@@ -128,20 +129,20 @@ export default function Dashboard() {
                 <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
                     <Card>
                         <CardHeader className="flex flex-row items-center justify-between pb-2">
-                            <CardTitle className="text-sm font-medium">Cumulative GPA</CardTitle>
+                            <CardTitle className="text-sm font-medium">通算GPA</CardTitle>
                             <TrendingUp className="h-4 w-4 text-muted-foreground" />
                         </CardHeader>
                         <CardContent>
                             <div className="text-2xl font-bold">{analysisData ? analysisData.gpa.cumulative : "-.--"}</div>
                             <p className="text-xs text-muted-foreground">
-                                {analysisData ? "Based on uploaded data" : "Upload to see your GPA"}
+                                {analysisData ? "アップロードされたデータに基づく" : "アップロードしてGPAを確認"}
                             </p>
                         </CardContent>
                     </Card>
 
                     <Card>
                         <CardHeader className="flex flex-row items-center justify-between pb-2">
-                            <CardTitle className="text-sm font-medium">Earned Credits</CardTitle>
+                            <CardTitle className="text-sm font-medium">修得単位数</CardTitle>
                             <FileText className="h-4 w-4 text-muted-foreground" />
                         </CardHeader>
                         <CardContent>
@@ -149,7 +150,7 @@ export default function Dashboard() {
                                 {analysisData ? `${analysisData.earnedCredits} / ${analysisData.graduationRequirement.total}` : "- / -"}
                             </div>
                             <p className="text-xs text-muted-foreground">
-                                {analysisData ? `${analysisData.graduationRequirement.percentage}% to graduation` : "Upload to see progress"}
+                                {analysisData ? `卒業まで ${analysisData.graduationRequirement.percentage}%` : "アップロードして進捗を確認"}
                             </p>
                             <div className="mt-2 h-1 w-full bg-secondary rounded-full overflow-hidden">
                                 <div
@@ -162,7 +163,7 @@ export default function Dashboard() {
 
                     <Card>
                         <CardHeader className="flex flex-row items-center justify-between pb-2">
-                            <CardTitle className="text-sm font-medium">Total Courses</CardTitle>
+                            <CardTitle className="text-sm font-medium">総履修科目数</CardTitle>
                             <FileText className="h-4 w-4 text-muted-foreground" />
                         </CardHeader>
                         <CardContent>
@@ -172,12 +173,12 @@ export default function Dashboard() {
 
                     <Card>
                         <CardHeader className="flex flex-row items-center justify-between pb-2">
-                            <CardTitle className="text-sm font-medium">Next Milestone</CardTitle>
+                            <CardTitle className="text-sm font-medium">次のマイルストーン</CardTitle>
                             <AlertCircle className="h-4 w-4 text-muted-foreground" />
                         </CardHeader>
                         <CardContent>
-                            <div className="text-sm font-medium">Coming Soon</div>
-                            <p className="text-xs text-muted-foreground">Analysis details will appear here</p>
+                            <div className="text-sm font-medium">準備中</div>
+                            <p className="text-xs text-muted-foreground">詳細な分析はここに表示されます</p>
                         </CardContent>
                     </Card>
                 </div>
@@ -185,8 +186,8 @@ export default function Dashboard() {
                 <div className="mt-6 grid gap-6 md:grid-cols-2 lg:grid-cols-7">
                     <Card className="col-span-4">
                         <CardHeader>
-                            <CardTitle>GPA Trend</CardTitle>
-                            <CardDescription>Your performance over semesters</CardDescription>
+                            <CardTitle>GPA推移</CardTitle>
+                            <CardDescription>学期ごとの成績推移</CardDescription>
                         </CardHeader>
                         <CardContent className="pl-2">
                             <ResponsiveContainer width="100%" height={300}>
@@ -222,8 +223,8 @@ export default function Dashboard() {
 
                     <Card className="col-span-3">
                         <CardHeader>
-                            <CardTitle>Grade Distribution</CardTitle>
-                            <CardDescription>Count of S, A, B, C, F grades</CardDescription>
+                            <CardTitle>評価分布</CardTitle>
+                            <CardDescription>S, A, B, C, F の取得数</CardDescription>
                         </CardHeader>
                         <CardContent>
                             <ResponsiveContainer width="100%" height={300}>
@@ -251,8 +252,8 @@ export default function Dashboard() {
                 <div className="mt-6">
                     <Card>
                         <CardHeader>
-                            <CardTitle>Analyzed Courses</CardTitle>
-                            <CardDescription>Courses extracted from uploaded transcript</CardDescription>
+                            <CardTitle>解析済み科目一覧</CardTitle>
+                            <CardDescription>アップロードされた成績表から抽出した科目</CardDescription>
                         </CardHeader>
                         <CardContent>
                             <div className="space-y-4">
@@ -260,7 +261,9 @@ export default function Dashboard() {
                                     <div key={i} className="flex items-center justify-between border-b pb-4 last:border-0 last:pb-0">
                                         <div>
                                             <p className="font-medium leading-none">{course.subject}</p>
-                                            <p className="text-sm text-muted-foreground">{course.year} {course.semester} • {course.credits} Credits</p>
+                                            <p className="text-sm text-muted-foreground mt-1">
+                                                {course.teacher} <span className="mx-1">•</span> {course.year} {course.semester} <span className="mx-1">•</span> {course.credits} 単位
+                                            </p>
                                         </div>
                                         <div className="flex items-center gap-4">
                                             <div className={`text-lg font-bold ${course.grade === 'S' || course.grade === 'A' ? 'text-green-600' :
@@ -272,7 +275,7 @@ export default function Dashboard() {
                                     </div>
                                 )) : (
                                     <div className="text-center py-8 text-muted-foreground">
-                                        Upload a transcript to view course details
+                                        成績表をアップロードして詳細を表示
                                     </div>
                                 )}
                             </div>

@@ -23,6 +23,38 @@ interface ParsedLine {
 import { Grade, AnalysisResult } from '@/lib/types';
 import { calculateGPA } from '@/lib/gpa';
 
+// Map of course code prefix (first 2 chars) → credits
+// 専門科目は2単位または4単位だが、シラバスDBなしでは判別不可のため2単位デフォルト
+// 19（言語文化等）のみ1単位が確定
+const CREDIT_MAP: Record<string, number> = {
+    '00': 2, // 文学部
+    '01': 2, // 人間科学部
+    '02': 2, // 法学部
+    '03': 2, // 経済学部
+    '04': 2, // 理学部
+    '05': 2, // 医学部（医）
+    '0A': 2, // 医学部（保健）
+    '06': 2, // 歯学部
+    '07': 2, // 薬学部
+    '08': 2, // 工学部
+    '09': 2, // 基礎工学部
+    '10': 2, // 外国語学部
+    '13': 2, // 全学教育推進機構（共通教育）
+    '19': 1, // 全学教育推進機構（言語文化等）→ 1単位確定
+};
+
+function inferCredits(courseCode: string): number {
+    const prefix = courseCode.substring(0, 2);
+    return CREDIT_MAP[prefix] ?? 2;
+}
+
+function inferSemester(lineStr: string): string {
+    if (/前学期|前期/.test(lineStr)) return '前期';
+    if (/後学期|後期/.test(lineStr)) return '後期';
+    if (/通年/.test(lineStr)) return '通年';
+    return '前期';
+}
+
 function normalizeGrade(rawGrade: string, textAround: string): Grade['grade'] | null {
     let g = rawGrade.toUpperCase();
 
@@ -139,8 +171,7 @@ function parseOCRText(annotations: any[]): Grade[] {
                 }
             }
 
-            // Default Credits
-            let credits = 2;
+            const credits = inferCredits(code);
 
             // --- EXTRACT SUBJECT & TEACHER (Dynamic Gap Logic) ---
             // Gather all words between Code and Year
@@ -156,48 +187,44 @@ function parseOCRText(annotations: any[]): Grade[] {
             let teacher = "";
 
             if (contentWords.length > 0) {
-                // Find the largest horizontal gap between words
-                let maxGap = 0;
-                let splitIndex = -1;
-
+                // Build gap list sorted largest-first, skipping splits where next word
+                // starts with an opening bracket/paren (OCR gap artifact around （ ＜ etc.)
+                const BRACKET_START = /^[（(「【＜<]/;
+                const gapList: { gap: number; index: number }[] = [];
                 for (let i = 0; i < contentWords.length - 1; i++) {
-                    const current = contentWords[i];
-                    const next = contentWords[i + 1];
-                    const gap = next.x - (current.x + current.width);
+                    const cur = contentWords[i];
+                    const nxt = contentWords[i + 1];
+                    gapList.push({ gap: nxt.x - (cur.x + cur.width), index: i });
+                }
+                gapList.sort((a, b) => b.gap - a.gap);
 
-                    if (gap > maxGap) {
-                        maxGap = gap;
-                        splitIndex = i;
+                let splitIndex = -1;
+                for (const { gap, index } of gapList) {
+                    if (gap <= COLUMN_GAP_THRESHOLD) break;
+                    if (!BRACKET_START.test(contentWords[index + 1].text)) {
+                        splitIndex = index;
+                        break;
                     }
                 }
 
-                // Decide if we split
-                // If maxGap is small (e.g. just a space in a name), maybe there is no teacher?
-                // Or maybe subject is long?
-                // However, usually there is a distinct column gap.
-                // Exception: "科目名" ... "先生" -> Gap is large.
-                // Exception: "Subject Name" ... "Robert Scott" -> Gap is large.
-                // Exception: "Subject Name" ... (No teacher?) -> No large gap.
-
-                if (maxGap > COLUMN_GAP_THRESHOLD) {
-                    // Split into Subject and Teacher
-                    const subjectPart = contentWords.slice(0, splitIndex + 1);
-                    const teacherPart = contentWords.slice(splitIndex + 1);
-
-                    subject = subjectPart.map(w => w.text).join(' ');
-                    teacher = teacherPart.map(w => w.text).join(' ');
+                if (splitIndex >= 0) {
+                    subject = contentWords.slice(0, splitIndex + 1).map(w => w.text).join(' ');
+                    teacher = contentWords.slice(splitIndex + 1).map(w => w.text).join(' ');
                 } else {
-                    // No clear gap. Entirely subject?
-                    // Or check if valid teacher name? Hard.
-                    // Assume entirely subject if no gap.
                     subject = contentWords.map(w => w.text).join(' ');
-                    teacher = ""; // Unknown
+                    teacher = "";
                 }
             }
 
-            // Clean Subject cleaning
-            subject = subject.replace(/^[0-9]+\s*/, "").trim();
-            teacher = teacher.trim();
+            // Clean Subject and Teacher: remove pipes, collapse spaces, strip spaces next to brackets
+            const cleanText = (s: string) => s
+                .replace(/\|/g, "")
+                .replace(/\s+([（）＜＞「」【】<>(){}])/g, '$1')
+                .replace(/([（＜「【<({])\s+/g, '$1')
+                .replace(/\s+/g, " ")
+                .trim();
+            subject = cleanText(subject).replace(/^[0-9]+\s*/, "");
+            teacher = cleanText(teacher);
 
             if (subject.length === 0) subject = "Unknown Subject";
             if (teacher.length === 0) teacher = "Unknown";
@@ -206,10 +233,11 @@ function parseOCRText(annotations: any[]): Grade[] {
                 grades.push({
                     subject,
                     teacher,
-                    semester: "前期", // Default
-                    credits: credits,
+                    semester: inferSemester(lineStr),
+                    credits,
                     grade: finalGrade,
-                    year: year
+                    year,
+                    courseCode: code,
                 });
             }
         }

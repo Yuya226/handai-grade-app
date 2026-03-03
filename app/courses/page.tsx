@@ -9,7 +9,6 @@ import { calculateGPA } from "@/lib/gpa";
 import type { Grade, AnalysisResult } from "@/lib/types";
 
 const GRADE_OPTIONS: Grade["grade"][] = ["S", "A", "B", "C", "F", "P"];
-const SEMESTER_OPTIONS = ["前期", "後期", "通年"];
 
 const GRADE_COLORS: Record<string, string> = {
     S: "text-green-600",
@@ -121,7 +120,6 @@ export default function CoursesPage() {
                                     <th className="px-4 py-3 text-left font-medium">科目名</th>
                                     <th className="px-4 py-3 text-left font-medium">教員名</th>
                                     <th className="px-4 py-3 text-left font-medium">年度</th>
-                                    <th className="px-4 py-3 text-left font-medium">学期</th>
                                     <th className="px-4 py-3 text-left font-medium">単位</th>
                                     <th className="px-4 py-3 text-left font-medium">成績</th>
                                     <th className="px-4 py-3 text-left font-medium"></th>
@@ -155,17 +153,6 @@ export default function CoursesPage() {
                                                 onChange={(e) => updateGrade(idx, "year", parseInt(e.target.value) || g.year)}
                                                 className="w-20 bg-transparent border-b border-transparent hover:border-border focus:border-primary focus:outline-none py-0.5"
                                             />
-                                        </td>
-                                        <td className="px-4 py-2">
-                                            <select
-                                                value={g.semester}
-                                                onChange={(e) => updateGrade(idx, "semester", e.target.value)}
-                                                className="bg-transparent border-b border-transparent hover:border-border focus:border-primary focus:outline-none py-0.5"
-                                            >
-                                                {SEMESTER_OPTIONS.map((s) => (
-                                                    <option key={s} value={s}>{s}</option>
-                                                ))}
-                                            </select>
                                         </td>
                                         <td className="px-4 py-2">
                                             <input

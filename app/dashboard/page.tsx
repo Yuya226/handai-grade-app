@@ -35,7 +35,7 @@ export default function Dashboard() {
     return (
         <div className="flex min-h-screen flex-col bg-muted/20">
             <header className="sticky top-0 z-30 flex h-14 items-center border-b bg-background px-6 shadow-sm">
-                <h1 className="text-lg font-bold text-primary">シロバス</h1>
+                <h1 className="text-lg font-bold text-primary">Syllobus</h1>
             </header>
 
             <main className="flex-1 p-4 md:p-8 max-w-2xl mx-auto w-full">

@@ -5,7 +5,7 @@ import "./globals.css";
 const outfit = Outfit({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-    title: "シロバス | 阪大生の成績集合知",
+    title: "Syllobus | 阪大生の成績集合知",
     description: "成績スクショをアップするだけ。学部別GPA・科目の成績分布がわかる阪大生向けサービス。",
 };
 

@@ -12,7 +12,7 @@ export default function Home() {
                 <div className="container flex h-full items-center justify-between px-4 md:px-6">
                     <div className="flex items-center gap-2 font-bold text-xl text-primary">
                         <TrendingUp className="h-6 w-6" />
-                        <span>シロバス</span>
+                        <span>Syllobus</span>
                     </div>
                     <nav className="flex gap-4">
                         <Button asChild variant="ghost" size="sm">

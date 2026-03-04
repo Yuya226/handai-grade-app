@@ -11,7 +11,7 @@ export default function AboutPage() {
                 </Link>
                 <div className="flex items-center gap-2 font-bold text-lg text-primary">
                     <TrendingUp className="h-5 w-5" />
-                    シロバス
+                    Syllobus
                 </div>
             </header>
 
@@ -25,7 +25,7 @@ export default function AboutPage() {
                     </CardHeader>
                     <CardContent className="text-sm text-muted-foreground space-y-2 leading-relaxed">
                         <p>
-                            シロバス は、阪大生の成績に関する情報格差を解消することを目的とした、
+                            Syllobus は、阪大生の成績に関する情報格差を解消することを目的とした、
                             学生有志による非公式サービスです。
                         </p>
                         <p>

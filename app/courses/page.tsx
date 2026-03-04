@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { calculateGPA } from "@/lib/gpa";
 import type { Grade, AnalysisResult } from "@/lib/types";
 
-const GRADE_OPTIONS: Grade["grade"][] = ["S", "A", "B", "C", "F", "P"];
+const GRADE_OPTIONS = ["S", "A", "B", "C", "F", "P"] as const;
 const SEMESTER_OPTIONS = ["前期", "後期", "通年"];
 
 const GRADE_COLORS: Record<string, string> = {
@@ -62,7 +62,7 @@ export default function CoursesPage() {
         localStorage.setItem("handai_analysis_data", JSON.stringify(newData));
     }
 
-    function updateGrade(idx: number, field: keyof Grade, value: string | number) {
+    function updateGrade(idx: number, field: keyof Grade, value: string | number | null) {
         const updated = grades.map((g, i) => (i === idx ? { ...g, [field]: value } : g));
         applyUpdate(updated);
     }
@@ -179,12 +179,12 @@ export default function CoursesPage() {
                                         </td>
                                         <td className="px-4 py-2">
                                             <select
-                                                value={g.grade}
+                                                value={g.grade ?? ''}
                                                 onChange={(e) => updateGrade(idx, "grade", e.target.value as Grade["grade"])}
-                                                className={`bg-transparent border-b border-transparent hover:border-border focus:border-primary focus:outline-none py-0.5 font-bold ${GRADE_COLORS[g.grade] ?? ""}`}
+                                                className={`bg-transparent border-b border-transparent hover:border-border focus:border-primary focus:outline-none py-0.5 font-bold ${GRADE_COLORS[g.grade ?? ''] ?? ""}`}
                                             >
                                                 {GRADE_OPTIONS.map((opt) => (
-                                                    <option key={opt} value={opt} className={GRADE_COLORS[opt]}>
+                                                    <option key={opt} value={opt ?? ''} className={opt ? GRADE_COLORS[opt] : ''}>
                                                         {opt}
                                                     </option>
                                                 ))}

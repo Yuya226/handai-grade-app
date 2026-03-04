@@ -60,14 +60,37 @@ interface SubjectRow {
 // ── CELAS ──────────────────────────────────────────────────────────────────────
 
 /**
- * "liberal-arts(春夏)" → { category: "liberal-arts", semester: "春夏" }
- * スラグをそのまま保存し、requirements.ts の CATEGORY_TO_REQ と対応させる。
+ * 2024年以前のCELASは英語スラグ形式（例: "health-sports(春夏)"）、
+ * 2025年以降は日本語形式（例: "健康・スポーツ教育科目"）。
+ * どちらも日本語に統一してDBに保存する。
  */
-function parseCelasCategory(raw: string): { category: string; semester: string } {
-    const semMatch = raw.match(/\((春夏|秋冬)\)$/);
-    const semester = semMatch ? semMatch[1] : '';
-    const slug = raw.replace(/\((春夏|秋冬)\)\s*$/, '').trim();
-    return { category: slug, semester };
+const SLUG_TO_JP: Record<string, string> = {
+    'gakumon-ss':            '学問への扉',
+    'liberal-arts':          '基盤教養教育科目',
+    'advanced-liberal-arts': '高度教養教育科目',
+    'advanced-seminar':      'アドヴァンスト・セミナー',
+    'information':           '情報教育科目',
+    'health-sports':         '健康・スポーツ教育科目',
+    'global':                'グローバル理解教育科目',
+    'language-1st':          'マルチリンガル教育科目（英語）',
+    'language-2nd':          'マルチリンガル教育科目（第2外国語）',
+};
+
+function celasCategory(raw: string, name: string): string | null {
+    // 季節サフィックスを除去して正規化
+    const cat = raw.replace(/\((春夏|秋冬)\)\s*$/, '').trim();
+
+    // 旧英語スラグ形式（2024以前）→ 日本語に変換
+    if (SLUG_TO_JP[cat]) return SLUG_TO_JP[cat];
+
+    // 新日本語形式（2025以降）: マルチリンガルのみ名前で英語/第2外国語を判定
+    if (cat === 'マルチリンガル教育科目') {
+        return /総合英語|実践英語/.test(name)
+            ? 'マルチリンガル教育科目（英語）'
+            : 'マルチリンガル教育科目（第2外国語）';
+    }
+
+    return cat || null;
 }
 
 function loadCelas(year: Year): SubjectRow[] {
@@ -80,14 +103,14 @@ function loadCelas(year: Year): SubjectRow[] {
     return raw
         .filter(item => item.name?.trim())
         .map(item => {
-            const { category, semester } = parseCelasCategory(item.category ?? '');
+            const cleanName = item.name.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
             return {
                 code:     toValidCode(item.code),
-                name:     item.name.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim(),
-                category: category || null,
+                name:     cleanName,
+                category: celasCategory(item.category ?? '', cleanName),
                 credits:  typeof item.credits === 'number' ? item.credits : null,
                 teacher:  item.teacher?.replace(/\n/g, ' ').trim() || null,
-                semester: semester || null,
+                semester: null,
                 source:   'celas',
                 year:     item.year ?? year,
             };
@@ -97,18 +120,6 @@ function loadCelas(year: Year): SubjectRow[] {
 
 // ── econ ───────────────────────────────────────────────────────────────────────
 
-/**
- * econ の日本語カテゴリ → スラグ変換マップ
- * cleanEconCategory() 後の文字列と対応させる
- */
-const ECON_CATEGORY_MAP: Record<string, string> = {
-    '専門基礎必修':       'econ-basic',
-    '必修科目':           'econ-req',
-    '選択必修１':         'econ-sel1',
-    '選択必修２':         'econ-sel2',
-    '選択科目':           'econ-elec',
-    '選択科目（実践講義）': 'econ-elec',
-};
 
 function cleanEconName(raw: string): string {
     return raw
@@ -142,7 +153,7 @@ function loadEcon(year: Year): SubjectRow[] {
             const row: SubjectRow = {
                 code:     toValidCode(item.code),
                 name,
-                category: (ECON_CATEGORY_MAP[cleanedCat] ?? cleanedCat) || null,
+                category: cleanedCat || null,
                 credits:  isNaN(creditsNum) ? null : creditsNum,
                 teacher:  item.teacher?.trim() || null,
                 semester: item.semester?.trim() || null,

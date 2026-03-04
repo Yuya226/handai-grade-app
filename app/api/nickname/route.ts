@@ -10,7 +10,7 @@ function generateNickname(grades: Grade[], gpa: number): NicknameResult {
     const total = grades.length;
     const counts = { S: 0, A: 0, B: 0, C: 0, F: 0 };
     grades.forEach(g => {
-        if (g.grade in counts) counts[g.grade as keyof typeof counts]++;
+        if (g.grade && g.grade in counts) counts[g.grade as keyof typeof counts]++;
     });
 
     const { S, A, B, C, F } = counts;

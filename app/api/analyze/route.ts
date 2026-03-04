@@ -50,24 +50,27 @@ function inferCredits(courseCode: string): number {
 }
 
 function inferSemester(lineStr: string): string {
-    if (/前学期|前期/.test(lineStr)) return '前期';
-    if (/後学期|後期/.test(lineStr)) return '後期';
+    if (/前学期|前期|春学期|春〜夏学期/.test(lineStr)) return '前期';
+    if (/後学期|後期|秋学期|秋〜冬学期/.test(lineStr)) return '後期';
     if (/通年/.test(lineStr)) return '通年';
     return '前期';
 }
 
-function normalizeGrade(rawGrade: string, textAround: string): Grade['grade'] | null {
-    let g = rawGrade.toUpperCase();
+function normalizeGrade(rawGrade: string): Grade['grade'] | null {
+    // Handle OCR-merged tokens: grade letter immediately followed by 合 kanji
+    // e.g., 'B合' → 'B', 'S合' → 'S' (OCR sometimes merges adjacent cells)
+    const merged = /^([SABCFPsabcfp])合/.exec(rawGrade);
+    if (merged) return merged[1].toUpperCase() as Grade['grade'];
 
-    // Heuristic fixes for OCR number/letter confusion
-    if (g === '8') g = 'B';
-    if (g === '6') g = 'S';
-    if (g === '5') g = 'S';
-    if (g === '0') g = 'C';
+    let g = rawGrade.trim().toUpperCase();
+    // OCR digit/letter confusion fixes
+    if (g === '8') g = 'B';  // 8 ↔ B
+    if (g === '6') g = 'S';  // 6 ↔ S
+    if (g === '5') g = 'S';  // 5 ↔ S
+    if (g === '0') g = 'C';  // 0 ↔ C
+    if (g === '4') g = 'A';  // 4 ↔ A
 
-    if (['S', 'A', 'B', 'C', 'F'].includes(g)) return g as Grade['grade'];
-    if (rawGrade.includes('合')) return 'P';
-
+    if (['S', 'A', 'B', 'C', 'F', 'P'].includes(g)) return g as Grade['grade'];
     return null;
 }
 
@@ -94,7 +97,8 @@ function reconstructLinesFromAnnotations(annotations: any[]): ParsedLine[] {
     words.sort((a, b) => a.y - b.y);
 
     const lines: ParsedLine[] = [];
-    const LINE_HEIGHT_TOLERANCE = 15;
+    // 8px に絞ることで、縮小スクショ（80%以下）での行マージを防ぐ
+    const LINE_HEIGHT_TOLERANCE = 8;
 
     for (const word of words) {
         let matchedLine = lines.find(line => Math.abs(line.avgY - word.y) < LINE_HEIGHT_TOLERANCE);
@@ -119,128 +123,234 @@ function reconstructLinesFromAnnotations(annotations: any[]): ParsedLine[] {
     return lines;
 }
 
-// Coordinate-based Parser with Dynamic Column Separation
+/**
+ * Y座標の分布が二峰性の行（複数行がマージされた行）を分割する。
+ * LINE_HEIGHT_TOLERANCE を下げても残るマージを後処理でケアする。
+ */
+function splitMixedLines(lines: ParsedLine[]): ParsedLine[] {
+    const result: ParsedLine[] = [];
+    for (const line of lines) {
+        if (line.words.length < 4) { result.push(line); continue; }
+
+        const ys = [...line.words.map(w => w.y)].sort((a, b) => a - b);
+        const gaps = ys.slice(1).map((y, i) => y - ys[i]);
+        const maxGap = Math.max(...gaps);
+
+        // 8px を超えるY方向のギャップがあれば2行に分割
+        if (maxGap > 8) {
+            const threshold = ys[gaps.indexOf(maxGap)] + maxGap / 2;
+            const topWords    = line.words.filter(w => w.y <= threshold);
+            const bottomWords = line.words.filter(w => w.y >  threshold);
+            if (topWords.length > 0 && bottomWords.length > 0) {
+                result.push({
+                    words:  topWords.sort((a, b) => a.x - b.x),
+                    avgY:   topWords.reduce((s, w) => s + w.y, 0) / topWords.length,
+                });
+                result.push({
+                    words:  bottomWords.sort((a, b) => a.x - b.x),
+                    avgY:   bottomWords.reduce((s, w) => s + w.y, 0) / bottomWords.length,
+                });
+                continue;
+            }
+        }
+        result.push(line);
+    }
+    return result;
+}
+
+// Mobile: info-sub-line patterns that appear below the anchor (not subject/teacher)
+const INFO_LINE_RE = /^(リーディング|高度教養|修得年度)/;
+
+// Coordinate-based Parser — supports both PC and mobile KOAN layouts
 function parseOCRText(annotations: any[]): Grade[] {
-    // 1. Reconstruct lines with coordinate info
-    const lines = reconstructLinesFromAnnotations(annotations);
+    let lines = reconstructLinesFromAnnotations(annotations);
+    lines = splitMixedLines(lines);
     const grades: Grade[] = [];
 
-    // 2. Parse Data Rows
-    // We process each line independently to handle slight skews or variable column widths
-    const COLUMN_GAP_THRESHOLD = 15; // Minimum pixels to consider a column break vs word space
+    // Raw annotation words for mobile right-column grade lookup
+    const rawWords = annotations.slice(1).map((a: any) => {
+        const verts = a.boundingPoly?.vertices ?? [];
+        if (verts.length < 4) return null;
+        return {
+            text: a.description as string,
+            y: (verts[0].y + verts[2].y) / 2,
+            x: verts[0].x as number,
+            width: (verts[1].x - verts[0].x) as number,
+        };
+    }).filter(Boolean) as { text: string; x: number; y: number; width: number }[];
 
-    for (const line of lines) {
-        const lineStr = line.words.map(w => w.text).join(' ');
+    const COLUMN_GAP_THRESHOLD = 15;
 
-        // Anchor: Code and Year
-        const codeMatch = lineStr.match(/(?:^|\D)(\d{6})(?:\D|$)/);
-        const yearMatch = lineStr.match(/202[0-9]/);
+    // ── grade helpers ───────────────────────────────────────────────────────
 
-        if (codeMatch && yearMatch) {
-            const code = codeMatch[1];
-            const year = parseInt(yearMatch[0]);
+    /** PC: scan line right→left; primary skips 合/否, fallback maps 合→P */
+    function extractGradePC(line: ParsedLine, yearStartX: number): Grade['grade'] | null {
+        for (let i = line.words.length - 1; i >= 0; i--) {
+            const w = line.words[i];
+            if (w.x < yearStartX) continue;
+            if (w.text === '合' || w.text === '否') continue;
+            if (w.text.length > 2 && !/^[SABCFPsabcfp]合/.test(w.text)) continue;
+            const g = normalizeGrade(w.text);
+            if (g) return g;
+        }
+        for (let i = line.words.length - 1; i >= 0; i--) {
+            const w = line.words[i];
+            if (w.x < yearStartX) continue;
+            if (w.text.includes('合')) return 'P';
+        }
+        return null;
+    }
 
-            // Find Code word and Year word to frame our content
-            const codeWord = line.words.find(w => w.text.includes(code));
-            const yearWord = line.words.find(w => w.text.includes(year.toString()));
+    /** Mobile: find grade in right column (x > infoRightX) within ±70px of anchorY */
+    function extractGradeMobile(anchorY: number, infoRightX: number): Grade['grade'] | null {
+        const candidates = rawWords.filter(
+            w => w.x > infoRightX && Math.abs(w.y - anchorY) < 70
+        );
+        // Primary: letter grade
+        for (const w of candidates) {
+            if (w.text === '合' || w.text === '否') continue;
+            if (w.text.length > 2 && !/^[SABCFPsabcfp]合/.test(w.text)) continue;
+            const g = normalizeGrade(w.text);
+            if (g) return g;
+        }
+        // Fallback: 合 → P (P/F課 shows 合 in grade column; button also shows 合)
+        if (candidates.some(w => w.text === '合')) return 'P';
+        return null;
+    }
 
-            // Define boundaries
-            // We want the text strictly between Code and Year
-            // Note: Code might be split or stick to next word? Usually unlikely with 6 digits.
-            const codeEndX = codeWord ? codeWord.x + codeWord.width : 0;
-            const yearStartX = yearWord ? yearWord.x : 9999;
+    // ── subject/teacher split helper ────────────────────────────────────────
 
-            // --- EXTRACT GRADE (Strict Right-to-Left) ---
-            let finalGrade: Grade['grade'] | null = null;
+    function extractSubjectTeacher(
+        words: { text: string; x: number; y: number; width: number }[]
+    ) {
+        if (words.length === 0) return { subject: 'Unknown Subject', teacher: 'Unknown' };
 
-            // Check words from right to left, starting from end of line
-            // but ONLY consider words to the right of Year
-            for (let i = line.words.length - 1; i >= 0; i--) {
-                const w = line.words[i];
-                if (w.x < yearStartX) continue;
+        const BRACKET_START = /^[（(「【＜<]/;
+        const gapList: { gap: number; index: number }[] = [];
+        for (let i = 0; i < words.length - 1; i++) {
+            const cur = words[i], nxt = words[i + 1];
+            if (Math.abs(cur.y - nxt.y) > 10) continue; // skip cross-line gaps
+            gapList.push({ gap: nxt.x - (cur.x + cur.width), index: i });
+        }
+        gapList.sort((a, b) => b.gap - a.gap);
 
-                // Strict validation
-                if (w.text.length > 2 && !w.text.includes('合')) continue;
+        let splitIndex = -1;
+        for (const { gap, index } of gapList) {
+            if (gap <= COLUMN_GAP_THRESHOLD) break;
+            if (!BRACKET_START.test(words[index + 1].text)) { splitIndex = index; break; }
+        }
 
-                const g = normalizeGrade(w.text, lineStr);
-                if (g) {
-                    if (!finalGrade) {
-                        finalGrade = g;
-                    } else if (finalGrade === 'P' && g !== 'P') {
-                        finalGrade = g;
-                    }
+        const clean = (s: string) => s
+            .replace(/\|/g, '')
+            .replace(/\s+([（）＜＞「」【】<>(){}])/g, '$1')
+            .replace(/([（＜「【<({])\s+/g, '$1')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        let subject: string, teacher: string;
+        if (splitIndex >= 0) {
+            subject = clean(words.slice(0, splitIndex + 1).map(w => w.text).join(' '));
+            teacher = clean(words.slice(splitIndex + 1).map(w => w.text).join(' '));
+        } else {
+            subject = clean(words.map(w => w.text).join(' '));
+            teacher = '';
+        }
+        subject = subject.replace(/^[0-9]+\s*/, '');
+        return { subject: subject || 'Unknown Subject', teacher: teacher || 'Unknown' };
+    }
+
+    // ── identify anchor lines (lines containing 6-digit code + 202x year) ──
+
+    const anchorIndices: number[] = [];
+    for (let i = 0; i < lines.length; i++) {
+        const s = lines[i].words.map(w => w.text).join(' ');
+        if (/(?:^|\D)\d{6}(?:\D|$)/.test(s) && /202[0-9]/.test(s)) {
+            anchorIndices.push(i);
+        }
+    }
+    if (anchorIndices.length === 0) return grades;
+
+    // ── detect mobile (year precedes code) vs PC (code precedes year) ───────
+
+    let isMobile = false;
+    {
+        const al = lines[anchorIndices[0]];
+        const s  = al.words.map(w => w.text).join(' ');
+        const cm = s.match(/(?:^|\D)(\d{6})(?:\D|$)/);
+        const ym = s.match(/202[0-9]/);
+        if (cm && ym) {
+            const cw = al.words.find(w => w.text.includes(cm[1]));
+            const yw = al.words.find(w => w.text.includes(ym[0]));
+            if (cw && yw) isMobile = yw.x < cw.x;
+        }
+    }
+    console.log(`[analyze] format: ${isMobile ? 'mobile' : 'PC'}, anchors: ${anchorIndices.length}`);
+
+    // ── parse ────────────────────────────────────────────────────────────────
+
+    if (isMobile) {
+        // Mobile: subject is on lines ABOVE the anchor; grade is in right column
+        for (let ai = 0; ai < anchorIndices.length; ai++) {
+            const lineIdx = anchorIndices[ai];
+            const line    = lines[lineIdx];
+            const lineStr = line.words.map(w => w.text).join(' ');
+
+            const cm = lineStr.match(/(?:^|\D)(\d{6})(?:\D|$)/);
+            const ym = lineStr.match(/202[0-9]/);
+            if (!cm || !ym) continue;
+
+            const code     = cm[1];
+            const year     = parseInt(ym[0]);
+            const credits  = inferCredits(code);
+            const semester = inferSemester(lineStr);
+
+            // Rightmost X of anchor line = right boundary of info block
+            const infoRightX = Math.max(...line.words.map(w => w.x + w.width));
+            const grade      = extractGradeMobile(line.avgY, infoRightX);
+
+            // Collect subject words from lines between previous anchor and this anchor
+            // (excludes info-sub-lines like リーディング/高度教養/修得年度)
+            const prevAnchorIdx = ai > 0 ? anchorIndices[ai - 1] : -1;
+            const subjectWords: typeof rawWords = [];
+            for (let j = prevAnchorIdx + 1; j < lineIdx; j++) {
+                const l    = lines[j];
+                const lStr = l.words.map(w => w.text).join(' ');
+                if (INFO_LINE_RE.test(lStr)) continue;
+                if (line.avgY - l.avgY > 150) continue; // skip page headers far above
+                for (const w of l.words) {
+                    if (w.x < infoRightX) subjectWords.push(w);
                 }
             }
+            subjectWords.sort((a, b) => a.y !== b.y ? a.y - b.y : a.x - b.x);
+
+            const { subject, teacher } = extractSubjectTeacher(subjectWords);
+            grades.push({ subject, teacher, semester, credits, grade, year, courseCode: code });
+        }
+    } else {
+        // PC: subject, teacher, grade are all on the same line as the code+year anchor
+        for (const line of lines) {
+            const lineStr = line.words.map(w => w.text).join(' ');
+
+            const cm = lineStr.match(/(?:^|\D)(\d{6})(?:\D|$)/);
+            const ym = lineStr.match(/202[0-9]/);
+            if (!cm || !ym) continue;
+
+            const code = cm[1];
+            const year = parseInt(ym[0]);
+            const cw   = line.words.find(w => w.text.includes(code));
+            const yw   = line.words.find(w => w.text.includes(year.toString()));
+            const codeEndX   = cw ? cw.x + cw.width : 0;
+            const yearStartX = yw ? yw.x : 9999;
 
             const credits = inferCredits(code);
+            const grade   = extractGradePC(line, yearStartX);
 
-            // --- EXTRACT SUBJECT & TEACHER (Dynamic Gap Logic) ---
-            // Gather all words between Code and Year
-            const contentWords = line.words.filter(w => {
-                const center = w.x + w.width / 2;
-                return center > codeEndX && center < yearStartX;
-            });
+            const contentWords = line.words
+                .filter(w => { const cx = w.x + w.width / 2; return cx > codeEndX && cx < yearStartX; })
+                .sort((a, b) => a.x - b.x);
 
-            // Sort by X just in case
-            contentWords.sort((a, b) => a.x - b.x);
-
-            let subject = "Unknown Subject";
-            let teacher = "";
-
-            if (contentWords.length > 0) {
-                // Build gap list sorted largest-first, skipping splits where next word
-                // starts with an opening bracket/paren (OCR gap artifact around （ ＜ etc.)
-                const BRACKET_START = /^[（(「【＜<]/;
-                const gapList: { gap: number; index: number }[] = [];
-                for (let i = 0; i < contentWords.length - 1; i++) {
-                    const cur = contentWords[i];
-                    const nxt = contentWords[i + 1];
-                    gapList.push({ gap: nxt.x - (cur.x + cur.width), index: i });
-                }
-                gapList.sort((a, b) => b.gap - a.gap);
-
-                let splitIndex = -1;
-                for (const { gap, index } of gapList) {
-                    if (gap <= COLUMN_GAP_THRESHOLD) break;
-                    if (!BRACKET_START.test(contentWords[index + 1].text)) {
-                        splitIndex = index;
-                        break;
-                    }
-                }
-
-                if (splitIndex >= 0) {
-                    subject = contentWords.slice(0, splitIndex + 1).map(w => w.text).join(' ');
-                    teacher = contentWords.slice(splitIndex + 1).map(w => w.text).join(' ');
-                } else {
-                    subject = contentWords.map(w => w.text).join(' ');
-                    teacher = "";
-                }
-            }
-
-            // Clean Subject and Teacher: remove pipes, collapse spaces, strip spaces next to brackets
-            const cleanText = (s: string) => s
-                .replace(/\|/g, "")
-                .replace(/\s+([（）＜＞「」【】<>(){}])/g, '$1')
-                .replace(/([（＜「【<({])\s+/g, '$1')
-                .replace(/\s+/g, " ")
-                .trim();
-            subject = cleanText(subject).replace(/^[0-9]+\s*/, "");
-            teacher = cleanText(teacher);
-
-            if (subject.length === 0) subject = "Unknown Subject";
-            if (teacher.length === 0) teacher = "Unknown";
-
-            if (finalGrade) {
-                grades.push({
-                    subject,
-                    teacher,
-                    semester: inferSemester(lineStr),
-                    credits,
-                    grade: finalGrade,
-                    year,
-                    courseCode: code,
-                });
-            }
+            const { subject, teacher } = extractSubjectTeacher(contentWords);
+            grades.push({ subject, teacher, semester: inferSemester(lineStr), credits, grade, year, courseCode: code });
         }
     }
 

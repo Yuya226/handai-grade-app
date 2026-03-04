@@ -5,7 +5,7 @@ import type { Grade } from './types';
 export interface GradCategory {
     id: string;
     label: string;
-    group: 'A' | 'B' | 'C';
+    group: 'A' | 'B' | 'C' | 'D';
     groupLabel: string;
     minCredits: number;
     note?: string;
@@ -127,124 +127,70 @@ export const ECON_2025: GradCategory[] = [
         group: 'C', groupLabel: '専門教育系',
         label: '選択科目',
         minCredits: 22,
-        note: '選択必修Ⅰ・Ⅱの超過分も算入可',
+        note: '選択必修Ⅰ・Ⅱの超過分を自動算入',
+    },
+
+    // D. 自由選択科目（計 22単位）
+    {
+        id: 'jiyu_elec',
+        group: 'D', groupLabel: '自由選択',
+        label: '自由選択科目',
+        minCredits: 22,
+        note: '各カテゴリの超過単位が自動充当されます',
     },
 ];
 
 // ===== 分類ロジック =====
 
 /**
- * subjects テーブルの category 値 → 要件カテゴリ ID のマッピング。
+ * subjects テーブルの category 値（日本語）→ 要件カテゴリ ID のマッピング。
  *
- * 共通教育系（全確定）:
- *   "gakumon-ss"          学問への扉
- *   "liberal-arts"        基盤教養教育科目  ※必修/選択必修は科目名でさらに判定
- *   "advanced-liberal-arts" 高度教養教育科目
- *   "advanced-seminar"    アドヴァンスト・セミナー（高度教養に充当可）
- *   "information"         情報教育科目
- *   "health-sports"       健康・スポーツ教育科目
- *   "language-1st"        マルチリンガル教育科目（第1外国語 = 英語）
- *   "language-2nd"        マルチリンガル教育科目（第2外国語）
- *   "global"              グローバル理解教育科目
- *
- * 専門科目系（subjects テーブルにカテゴリが登録されている場合に使用）:
- *   "econ-basic"          専門基礎教育科目
- *   "econ-req"            専門必修（セミナー）
- *   "econ-sel1"           選択必修Ⅰ（第2表）
- *   "econ-sel2"           選択必修Ⅱ（第3表）
- *   "econ-elec"           選択科目（第4表）
+ * 基盤教養教育科目 のみ必修/選択必修が混在するため classifyEcon 内で科目名判定。
+ * マルチリンガル教育科目 は import 時にコード先頭2桁で英語/第2外国語に分割済み。
  */
 const CATEGORY_TO_REQ: Record<string, string> = {
-    // 共通教育
-    'gakumon-ss':            'gateway',
-    'advanced-liberal-arts': 'adv_lib',
-    'advanced-seminar':      'adv_lib',
-    'information':           'info',
-    'health-sports':         'sports',
-    'language-1st':          'english',
-    'language-2nd':          'lang2',
-    'global':                'global',
-    // 専門科目（subjects テーブルに登録済みの場合）
-    'econ-basic':            'spec_basic',
-    'econ-req':              'spec_req',
-    'econ-sel1':             'sel1',
-    'econ-sel2':             'sel2',
-    'econ-elec':             'spec_elec',
+    // CELAS 共通教育科目
+    '学問への扉':                       'gateway',
+    '高度教養教育科目':                 'adv_lib',
+    'アドヴァンスト・セミナー':         'adv_lib',
+    '情報教育科目':                     'info',
+    '健康・スポーツ教育科目':           'sports',
+    'マルチリンガル教育科目（英語）':   'english',
+    'マルチリンガル教育科目（第2外国語）': 'lang2',
+    'グローバル理解教育科目':           'global',
+    '専門基礎教育科目':                 'spec_basic', // CELAS（解析学入門・線形代数学入門）
+    // 経済学部専門科目
+    '専門基礎必修':                     'spec_basic',
+    '必修科目':                         'spec_req',
+    '選択必修１':                       'sel1',
+    '選択必修２':                       'sel2',
+    '選択科目':                         'spec_elec',
+    '選択科目（実践講義）':             'spec_elec',
 };
-
-/** 選択必修Ⅰ（第2表）の科目名リスト */
-const SEL1_NAMES = ['マクロ経済', 'ミクロ経済', '経済史', '経営計算システム', '統計'];
-
-/** 選択必修Ⅱ（第3表）の科目名キーワード */
-const SEL2_KEYWORDS = [
-    '財政', '金融', '国際経済', '労働経済', '都市', '地域経済', '応用ミクロ',
-    '経済発展', '公共経済', '計量経済', '日本経済史', '西洋経済史', '組織論',
-    '経営戦略', '財務会計', 'ファイナンス', 'マーケティング', '経営科学',
-    'データマイニング', '経営史', '国際経営', '財務諸表分析', '応用計量経済',
-];
-
-/**
- * SEL1 の科目名を厳密にマッチ。
- * 「上級マクロ経済」などを誤判定しないよう、キーワード直前の「上級」を除外する。
- */
-function matchesSel1(name: string): boolean {
-    return SEL1_NAMES.some(kw => {
-        const idx = name.indexOf(kw);
-        if (idx === -1) return false;
-        return !/上級$/.test(name.substring(0, idx));
-    });
-}
 
 /**
  * 1科目のGradeを要件カテゴリIDに分類する。
  *
- * 優先度:
- *   1. subjects テーブルの category フィールド（最高精度）
- *   2. 科目名キーワードによる判定
- *   3. コースコードプレフィックスによる判定（フォールバック）
+ * subjects テーブルの category フィールドをそのまま使用。
+ * "liberal-arts" のみ必修/選択必修が同一カテゴリに混在するため科目名で再判定。
+ * category が null の場合は null を返す（呼び出し元で未分類として扱う）。
  */
-export function classifyEcon(grade: Grade): string {
-    const name = grade.subject;
+export function classifyEcon(grade: Grade): string | null {
     const cat = grade.category ?? null;
-    const prefix = (grade.courseCode ?? '').substring(0, 2);
+    if (!cat) return null;
 
-    // ── 1. DB カテゴリ優先 ──────────────────────────────────────────────
-    if (cat) {
-        // "liberal-arts" は必修と選択必修が混在するため科目名で再判定
-        if (cat === 'liberal-arts') {
-            return /ミクロ経済学の考え方|マクロ経済学の考え方/.test(name)
-                ? 'lib_req'
-                : 'lib_elec';
-        }
-        const mapped = CATEGORY_TO_REQ[cat];
-        if (mapped) return mapped;
+    if (cat === '基盤教養教育科目') {
+        return /ミクロ経済学の考え方|マクロ経済学の考え方/.test(grade.subject)
+            ? 'lib_req'
+            : 'lib_elec';
     }
 
-    // ── 2. 科目名キーワードフォールバック ──────────────────────────────
-    if (/総合英語|実践英語/.test(name))                      return 'english';
-    if (/学問への扉/.test(name))                              return 'gateway';
-    if (/情報社会基礎/.test(name))                           return 'info';
-    if (/スポーツリテラシー|ヘルスリテラシー/.test(name))   return 'sports';
-    if (/ミクロ経済学の考え方|マクロ経済学の考え方/.test(name)) return 'lib_req';
-    if (/解析学入門|線形代数学入門/.test(name))             return 'spec_basic';
-    if (/専門セミナー|研究セミナー/.test(name))             return 'spec_req';
+    return CATEGORY_TO_REQ[cat] ?? null;
+}
 
-    // ── 3. コードプレフィックスフォールバック ──────────────────────────
-    if (prefix === '19') {
-        return /グローバル/.test(name) ? 'global' : 'lang2';
-    }
-    if (prefix === '13') {
-        if (/英語/.test(name))     return 'english';
-        if (/グローバル/.test(name)) return 'global';
-        return 'lib_elec';
-    }
-    if (prefix === '03') {
-        if (matchesSel1(name))                               return 'sel1';
-        if (SEL2_KEYWORDS.some(kw => name.includes(kw)))    return 'sel2';
-        return 'spec_elec';
-    }
-
-    return 'lib_elec'; // 判定不能 → 基盤教養選択に仮分類
+/** Grade を一意に識別するキー */
+export function gradeKey(grade: Grade): string {
+    return `${grade.courseCode ?? grade.subject}-${grade.year}`;
 }
 
 // ===== 進捗計算 =====
@@ -263,22 +209,33 @@ export interface GraduationProgress {
     totalRequired: number; // 130
     totalEarned: number;
     byCategory: CategoryProgress[];
+    /** DB カテゴリが null でユーザー未分類の科目 */
+    unclassified: Grade[];
 }
 
-export function calcEconProgress(grades: Grade[]): GraduationProgress {
-    const passed = grades.filter(g => g.grade !== 'F');
+/**
+ * @param overrides gradeKey → categoryId のユーザー手動分類マップ
+ */
+export function calcEconProgress(
+    grades: Grade[],
+    overrides: Record<string, string> = {},
+): GraduationProgress {
+    const passed = grades.filter(g => g.grade !== 'F' && g.grade !== null);
 
     // バケット初期化
     const buckets: Record<string, Grade[]> = {};
     for (const cat of ECON_2025) buckets[cat.id] = [];
+    const unclassified: Grade[] = [];
 
     for (const g of passed) {
-        const id = classifyEcon(g);
-        // 分類先が存在しない場合（想定外）は lib_elec へ
-        if (buckets[id] !== undefined) {
+        const key = gradeKey(g);
+        const id = overrides[key] ?? classifyEcon(g);
+        if (id === null) {
+            unclassified.push(g);
+        } else if (buckets[id] !== undefined) {
             buckets[id].push(g);
         } else {
-            buckets['lib_elec'].push(g);
+            unclassified.push(g);
         }
     }
 
@@ -293,14 +250,33 @@ export function calcEconProgress(grades: Grade[]): GraduationProgress {
         };
     });
 
-    // 選択科目（spec_elec）: 選択必修Ⅰ・Ⅱの超過分も算入して fulfilled を再判定
-    const sel1Earned = byCategory.find(c => c.category.id === 'sel1')!.earned;
-    const sel2Earned = byCategory.find(c => c.category.id === 'sel2')!.earned;
-    const elecCat = byCategory.find(c => c.category.id === 'spec_elec')!;
-    const overflow = Math.max(0, sel1Earned - 12) + Math.max(0, sel2Earned - 28);
-    elecCat.fulfilled = elecCat.earned + overflow >= 22;
+    // ── 選択科目（spec_elec）: sel1・sel2 超過分を移行し、移行元を上限に丸める ──
+    const sel1Cat  = byCategory.find(c => c.category.id === 'sel1')!;
+    const sel2Cat  = byCategory.find(c => c.category.id === 'sel2')!;
+    const elecCat  = byCategory.find(c => c.category.id === 'spec_elec')!;
+    const sel1Overflow = Math.max(0, sel1Cat.earned - 12);
+    const sel2Overflow = Math.max(0, sel2Cat.earned - 28);
+    sel1Cat.earned = Math.min(sel1Cat.earned, 12);   // 移行済み分を消す
+    sel2Cat.earned = Math.min(sel2Cat.earned, 28);   // 移行済み分を消す
+    elecCat.earned += sel1Overflow + sel2Overflow;
+    elecCat.fulfilled = elecCat.earned >= 22;
+
+    // ── 自由選択科目（jiyu_elec）: 各カテゴリの超過分を移行し、移行元を上限に丸める ──
+    const specElecOverflow = Math.max(0, elecCat.earned - 22);
+    elecCat.earned = Math.min(elecCat.earned, 22);   // 移行済み分を消す
+    let jiyuEarned = specElecOverflow;
+    for (const cp of byCategory) {
+        if (cp.category.manualCheck) continue;
+        if (['sel1', 'sel2', 'spec_elec', 'jiyu_elec'].includes(cp.category.id)) continue;
+        const over = Math.max(0, cp.earned - cp.category.minCredits);
+        cp.earned -= over;   // 移行済み分を消す
+        jiyuEarned += over;
+    }
+    const jiyuCat = byCategory.find(c => c.category.id === 'jiyu_elec')!;
+    jiyuCat.earned = jiyuEarned;
+    jiyuCat.fulfilled = jiyuEarned >= 22;
 
     const totalEarned = passed.reduce((sum, g) => sum + g.credits, 0);
 
-    return { totalRequired: 130, totalEarned, byCategory };
+    return { totalRequired: 130, totalEarned, byCategory, unclassified };
 }

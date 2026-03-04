@@ -11,6 +11,11 @@ export function getSupabaseAdmin(): SupabaseClient {
         }
         _client = createClient(url, key, {
             auth: { autoRefreshToken: false, persistSession: false },
+            global: {
+                // Next.js App Router はデフォルトで fetch をキャッシュするため
+                // DB更新が即座に反映されるよう no-store を指定する
+                fetch: (url, options) => fetch(url, { ...options, cache: 'no-store' }),
+            },
         });
     }
     return _client;

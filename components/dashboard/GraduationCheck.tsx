@@ -7,7 +7,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { Grade } from "@/lib/types";
-import { calcEconProgress, type CategoryProgress } from "@/lib/requirements";
+import { calcEconProgress, gradeKey, ECON_2025, type CategoryProgress } from "@/lib/requirements";
 
 // ── グレードバッジの色 ────────────────────────────────────────────────────────
 const GRADE_COLOR: Record<string, string> = {
@@ -20,11 +20,11 @@ const GRADE_COLOR: Record<string, string> = {
 };
 
 // ── 科目リスト（展開時に表示）────────────────────────────────────────────────
-function CourseList({ courses }: { courses: Grade[] }) {
+function CourseList({ courses, emptyNote }: { courses: Grade[]; emptyNote?: string }) {
     if (courses.length === 0) {
         return (
             <p className="text-xs text-muted-foreground italic py-1">
-                該当する科目がありません
+                {emptyNote ?? '該当する科目がありません'}
             </p>
         );
     }
@@ -32,8 +32,8 @@ function CourseList({ courses }: { courses: Grade[] }) {
         <ul className="space-y-1 py-1">
             {courses.map((g, i) => (
                 <li key={i} className="flex items-center gap-2 text-xs">
-                    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${GRADE_COLOR[g.grade] ?? 'bg-gray-100 text-gray-600'}`}>
-                        {g.grade}
+                    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${GRADE_COLOR[g.grade ?? ''] ?? 'bg-gray-100 text-gray-600'}`}>
+                        {g.grade ?? '?'}
                     </span>
                     <span className="flex-1 truncate">{g.subject}</span>
                     <span className="shrink-0 tabular-nums text-muted-foreground">
@@ -71,7 +71,6 @@ function CategoryRow({
 
     return (
         <div>
-            {/* ヘッダー行（クリックで展開） */}
             <button
                 onClick={onToggle}
                 className="w-full text-left py-1.5 hover:bg-muted/40 rounded-md px-1 -mx-1 transition-colors"
@@ -98,7 +97,6 @@ function CategoryRow({
                 )}
             </button>
 
-            {/* 展開コンテンツ */}
             {isOpen && (
                 <div className="ml-5 pl-3 border-l-2 border-dashed border-muted-foreground/20 mb-1">
                     {cp.category.note && (
@@ -106,8 +104,73 @@ function CategoryRow({
                             {cp.category.note}
                         </p>
                     )}
-                    <CourseList courses={cp.courses} />
+                    <CourseList
+                        courses={cp.courses}
+                        emptyNote={cp.category.id === 'jiyu_elec'
+                            ? '各カテゴリの超過単位から自動算出されます（個別の科目は各カテゴリを参照）'
+                            : undefined}
+                    />
                 </div>
+            )}
+        </div>
+    );
+}
+
+// ── 未分類科目セクション ──────────────────────────────────────────────────────
+function UnclassifiedSection({
+    courses,
+    overrides,
+    onOverride,
+}: {
+    courses: Grade[];
+    overrides: Record<string, string>;
+    onOverride: (key: string, catId: string) => void;
+}) {
+    const [isOpen, setIsOpen] = useState(true);
+    if (courses.length === 0) return null;
+
+    return (
+        <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
+            <button
+                onClick={() => setIsOpen(v => !v)}
+                className="w-full flex items-center gap-2 text-xs font-semibold text-rose-700"
+            >
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                <span className="flex-1 text-left">
+                    未分類の科目（{courses.length}件）— どの要件に該当するか選んでください
+                </span>
+                <ChevronDown
+                    className={`h-3.5 w-3.5 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
+                />
+            </button>
+
+            {isOpen && (
+                <ul className="mt-2 space-y-2">
+                    {courses.map(g => {
+                        const key = gradeKey(g);
+                        return (
+                            <li key={key} className="flex items-center gap-2 text-xs">
+                                <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${GRADE_COLOR[g.grade ?? ''] ?? 'bg-gray-100 text-gray-600'}`}>
+                                    {g.grade ?? '?'}
+                                </span>
+                                <span className="flex-1 truncate text-rose-900">{g.subject}</span>
+                                <span className="shrink-0 tabular-nums text-rose-600">
+                                    {g.credits}単位
+                                </span>
+                                <select
+                                    value={overrides[key] ?? ''}
+                                    onChange={e => onOverride(key, e.target.value)}
+                                    className="shrink-0 rounded border border-rose-300 bg-white text-[11px] px-1 py-0.5 text-rose-900 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                                >
+                                    <option value="">選択...</option>
+                                    {ECON_2025.filter(c => !c.manualCheck).map(c => (
+                                        <option key={c.id} value={c.id}>{c.label}</option>
+                                    ))}
+                                </select>
+                            </li>
+                        );
+                    })}
+                </ul>
             )}
         </div>
     );
@@ -118,19 +181,22 @@ const GROUP_DEFS = [
     { id: 'A', label: '教養教育系', minCredits: 18 },
     { id: 'B', label: '国際性涵養系', minCredits: 18 },
     { id: 'C', label: '専門教育系', minCredits: 72 },
+    { id: 'D', label: '自由選択', minCredits: 22 },
 ] as const;
 
 // ── メインコンポーネント ──────────────────────────────────────────────────────
 export default function GraduationCheck({ grades }: { grades: Grade[] }) {
-    const progress = calcEconProgress(grades);
+    const [overrides, setOverrides] = useState<Record<string, string>>({});
+    const progress = calcEconProgress(grades, overrides);
+
     const overallPct = Math.min((progress.totalEarned / 130) * 100, 100);
     const remaining = Math.max(0, 130 - progress.totalEarned);
 
     const allAutoFulfilled =
         progress.byCategory.filter(c => !c.category.manualCheck).every(c => c.fulfilled)
+        && progress.unclassified.length === 0
         && remaining === 0;
 
-    // 展開中のカテゴリIDを管理
     const [openCats, setOpenCats] = useState<Set<string>>(new Set());
     const toggle = (id: string) =>
         setOpenCats(prev => {
@@ -138,6 +204,16 @@ export default function GraduationCheck({ grades }: { grades: Grade[] }) {
             next.has(id) ? next.delete(id) : next.add(id);
             return next;
         });
+
+    const handleOverride = (key: string, catId: string) => {
+        setOverrides(prev => {
+            if (!catId) {
+                const { [key]: _, ...rest } = prev;
+                return rest;
+            }
+            return { ...prev, [key]: catId };
+        });
+    };
 
     return (
         <Card>
@@ -173,6 +249,13 @@ export default function GraduationCheck({ grades }: { grades: Grade[] }) {
                         </p>
                     )}
                 </div>
+
+                {/* ── 未分類科目 ── */}
+                <UnclassifiedSection
+                    courses={progress.unclassified}
+                    overrides={overrides}
+                    onOverride={handleOverride}
+                />
 
                 {/* ── カテゴリ別内訳 ── */}
                 {GROUP_DEFS.map(({ id, label, minCredits }) => {
@@ -226,7 +309,6 @@ export default function GraduationCheck({ grades }: { grades: Grade[] }) {
                         </p>
                     </div>
                     <p className="text-[10px] text-muted-foreground leading-relaxed">
-                        ※ 専門選択科目（選択必修Ⅰ・Ⅱ）の区分は科目名による自動推定です。実際の充足状況は学部の確認表でご確認ください。<br />
                         ※ 2025年度以降入学者の要件です。2019〜2024年度入学者は別途ご確認ください。
                     </p>
                 </div>

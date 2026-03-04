@@ -46,7 +46,7 @@ export function calculateGPA(grades: Grade[]) {
         semesters[key] = semesterCredits[key] > 0 ? parseFloat((semesterPoints[key] / semesterCredits[key]).toFixed(2)) : 0;
     }
 
-    const earnedCredits = grades.filter(g => g.grade !== 'F').reduce((sum, g) => sum + g.credits, 0);
+    const earnedCredits = grades.filter(g => g.grade !== 'F' && g.grade !== null).reduce((sum, g) => sum + g.credits, 0);
 
     return { cumulative, semesters, earnedCredits };
 }

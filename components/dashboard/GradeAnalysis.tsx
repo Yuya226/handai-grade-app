@@ -13,9 +13,31 @@ import {
     XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell
 } from "recharts";
 
-import type { AnalysisResult, AggregateStats, Faculty } from "@/lib/types";
+import type { AnalysisResult, AggregateStats, Faculty, Grade } from "@/lib/types";
 import { FACULTY_OPTIONS } from "@/lib/types";
+import { calculateGPA } from "@/lib/gpa";
 import GraduationCheck from "@/components/dashboard/GraduationCheck";
+import GradeReview from "@/components/dashboard/GradeReview";
+
+function mergeGrades(allGrades: Grade[][]): Grade[] {
+    const map = new Map<string, Grade>();
+    for (const grades of allGrades) {
+        for (const grade of grades) {
+            const key = grade.courseCode
+                ? `${grade.courseCode}-${grade.year}`
+                : `${grade.subject}-${grade.year}`;
+            const existing = map.get(key);
+            if (!existing) {
+                map.set(key, grade);
+            } else if (existing.grade === 'P' && grade.grade !== 'P') {
+                // Prefer a non-P grade over P when merging duplicates across images.
+                // P is a common OCR misread of B/S; if any image reads a letter grade, use it.
+                map.set(key, grade);
+            }
+        }
+    }
+    return Array.from(map.values());
+}
 
 function calcDeviation(userGpa: number, mean: number, stdDev: number): number | null {
     if (stdDev < 0.01) return null;
@@ -50,6 +72,7 @@ interface Props {
 export default function GradeAnalysis({ stats, sessionId, onStatsUpdate }: Props) {
     const [isUploading, setIsUploading] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(0);
+    const [pendingGrades, setPendingGrades] = useState<Grade[] | null>(null);
     const [analysisData, setAnalysisData] = useState<AnalysisResult | null>(() => {
         if (typeof window === "undefined") return null;
         const raw = localStorage.getItem('handai_analysis_data');
@@ -59,6 +82,40 @@ export default function GradeAnalysis({ stats, sessionId, onStatsUpdate }: Props
     const [faculty, setFaculty] = useState<Faculty | ''>('');
     const fileInputRef = useRef<HTMLInputElement>(null);
 
+    function buildAnalysisResult(grades: Grade[]): AnalysisResult {
+        const { cumulative, semesters, earnedCredits } = calculateGPA(grades);
+        return {
+            grades,
+            gpa: { cumulative, semesters },
+            earnedCredits,
+            graduationRequirement: {
+                total: 130,
+                current: earnedCredits,
+                percentage: Math.round((earnedCredits / 130) * 100),
+            },
+        };
+    }
+
+    const handleConfirm = (confirmedGrades: Grade[]) => {
+        const result = buildAnalysisResult(confirmedGrades);
+        setAnalysisData(result);
+        setPendingGrades(null);
+        localStorage.setItem('handai_analysis_data', JSON.stringify(result));
+
+        if (sessionId && faculty) {
+            fetch("/api/save-grades", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ session_id: sessionId, faculty, grades: confirmedGrades, session_gpa: result.gpa.cumulative }),
+            }).catch(err => console.error("save-grades failed:", err));
+        }
+
+        fetch(`/api/stats?gpa=${result.gpa.cumulative}`)
+            .then(r => r.json())
+            .then((s: AggregateStats) => onStatsUpdate(s))
+            .catch(err => console.error("stats fetch failed:", err));
+    };
+
     const participantCount = stats?.totalParticipants ?? FALLBACK_COUNT;
 
     const handleUploadClick = () => fileInputRef.current?.click();
@@ -66,47 +123,37 @@ export default function GradeAnalysis({ stats, sessionId, onStatsUpdate }: Props
     const handleReset = () => {
         localStorage.removeItem('handai_analysis_data');
         setAnalysisData(null);
+        setPendingGrades(null);
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
+        const files = Array.from(e.target.files ?? []);
+        if (files.length === 0) return;
 
         setIsUploading(true);
         setUploadProgress(0);
-
-        const formData = new FormData();
-        formData.append("file", file);
 
         const progressInterval = setInterval(() => {
             setUploadProgress(prev => prev >= 90 ? prev : prev + 10);
         }, 300);
 
         try {
-            const response = await fetch("/api/analyze", { method: "POST", body: formData });
-            if (!response.ok) {
-                const err = await response.json().catch(() => ({}));
-                throw new Error(err.error || `Analysis failed: ${response.status}`);
-            }
+            const results = await Promise.all(files.map(async (file) => {
+                const formData = new FormData();
+                formData.append("file", file);
+                const response = await fetch("/api/analyze", { method: "POST", body: formData });
+                if (!response.ok) {
+                    const err = await response.json().catch(() => ({}));
+                    throw new Error(err.error || `Analysis failed: ${response.status}`);
+                }
+                const data: AnalysisResult = await response.json();
+                return data.grades;
+            }));
 
-            const data: AnalysisResult = await response.json();
-            setAnalysisData(data);
-            localStorage.setItem('handai_analysis_data', JSON.stringify(data));
+            const merged = mergeGrades(results);
+            setPendingGrades(merged);
             setUploadProgress(100);
-
-            if (sessionId && faculty) {
-                fetch("/api/save-grades", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ session_id: sessionId, faculty, grades: data.grades, session_gpa: data.gpa.cumulative }),
-                }).catch(err => console.error("save-grades failed:", err));
-            }
-
-            fetch(`/api/stats?gpa=${data.gpa.cumulative}`)
-                .then(r => r.json())
-                .then((s: AggregateStats) => onStatsUpdate(s))
-                .catch(err => console.error("stats fetch failed:", err));
 
         } catch (error) {
             console.error("Error analyzing file:", error);
@@ -116,6 +163,20 @@ export default function GradeAnalysis({ stats, sessionId, onStatsUpdate }: Props
             setIsUploading(false);
         }
     };
+
+    // ── Review View ───────────────────────────────────────────────────────────
+    if (pendingGrades !== null) {
+        return (
+            <div className="space-y-4">
+                <div className="flex justify-end">
+                    <button onClick={handleReset} className="text-xs text-muted-foreground underline underline-offset-2">
+                        やり直す
+                    </button>
+                </div>
+                <GradeReview initialGrades={pendingGrades} onConfirm={handleConfirm} />
+            </div>
+        );
+    }
 
     // ── CTA View ──────────────────────────────────────────────────────────────
     if (analysisData === null) {
@@ -202,7 +263,7 @@ export default function GradeAnalysis({ stats, sessionId, onStatsUpdate }: Props
                 </div>
 
                 {/* Upload CTA */}
-                <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileChange} />
+                <input type="file" ref={fileInputRef} className="hidden" accept="image/*" multiple onChange={handleFileChange} />
 
                 {isUploading ? (
                     <div className="space-y-2 pt-1">
@@ -227,7 +288,7 @@ export default function GradeAnalysis({ stats, sessionId, onStatsUpdate }: Props
 
                         <Button size="lg" className="w-full h-12 text-base font-bold" onClick={handleUploadClick}>
                             <Upload className="mr-2 h-5 w-5" />
-                            成績をアップロード
+                            成績をアップロード（複数枚対応）
                         </Button>
                     </div>
                 )}
@@ -245,7 +306,7 @@ export default function GradeAnalysis({ stats, sessionId, onStatsUpdate }: Props
         : null;
 
     const gradeCounts = analysisData.grades.reduce((acc, curr) => {
-        acc[curr.grade] = (acc[curr.grade] || 0) + 1;
+        if (curr.grade) acc[curr.grade] = (acc[curr.grade] || 0) + 1;
         return acc;
     }, {} as Record<string, number>);
 

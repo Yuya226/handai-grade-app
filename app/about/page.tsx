@@ -9,10 +9,10 @@ export default function AboutPage() {
                 <Link href="/" className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors">
                     <ArrowLeft className="h-4 w-4" />
                 </Link>
-                <div className="flex items-center gap-2 font-bold text-lg text-primary">
+                <Link href="/" className="flex items-center gap-2 font-bold text-lg text-primary hover:opacity-80 transition-opacity">
                     <TrendingUp className="h-5 w-5" />
                     Syllobus
-                </div>
+                </Link>
             </header>
 
             <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-8 space-y-6">

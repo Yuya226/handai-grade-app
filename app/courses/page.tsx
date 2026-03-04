@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { TrendingUp } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { calculateGPA } from "@/lib/gpa";
 import type { Grade, AnalysisResult } from "@/lib/types";
@@ -80,7 +81,10 @@ export default function CoursesPage() {
                         ← ダッシュボードに戻る
                     </Button>
                 </Link>
-                <Link href="/" className="text-xl font-bold text-primary hover:opacity-80 transition-opacity">Syllobus</Link>
+                <Link href="/" className="flex items-center gap-1.5 font-bold text-xl text-primary hover:opacity-80 transition-opacity">
+                    <TrendingUp className="h-5 w-5" />
+                    Syllobus
+                </Link>
             </header>
 
             <main className="flex-1 p-6 md:p-8 max-w-5xl mx-auto w-full">

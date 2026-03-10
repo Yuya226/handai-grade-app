@@ -34,6 +34,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'DB error' }, { status: 500 });
     }
 
+    const parserVersion = parseInt(process.env.PARSER_VERSION ?? '1');
     const rows = grades.map((g) => ({
         session_id,
         faculty,
@@ -43,6 +44,7 @@ export async function POST(req: NextRequest) {
         credits: g.credits,
         year: g.year,
         session_gpa,
+        parser_version: parserVersion,
     }));
 
     const { error } = await supabase

@@ -68,9 +68,10 @@ interface Props {
     stats: AggregateStats | null;
     sessionId: string;
     onStatsUpdate: (s: AggregateStats) => void;
+    staleData?: boolean;
 }
 
-export default function GradeAnalysis({ stats, sessionId, onStatsUpdate }: Props) {
+export default function GradeAnalysis({ stats, sessionId, onStatsUpdate, staleData = false }: Props) {
     const [isUploading, setIsUploading] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(0);
     const [pendingGrades, setPendingGrades] = useState<Grade[] | null>(null);
@@ -411,6 +412,16 @@ export default function GradeAnalysis({ stats, sessionId, onStatsUpdate }: Props
 
     return (
         <div className="space-y-5">
+            {staleData && (
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm">
+                    <p className="text-amber-800 dark:text-amber-300">
+                        解析精度が向上しました。再アップロードするとより正確なデータになります。
+                    </p>
+                    <Button variant="outline" size="sm" onClick={handleReset} className="shrink-0 border-amber-400 text-amber-800 hover:bg-amber-100">
+                        再アップロード
+                    </Button>
+                </div>
+            )}
             <div className="flex justify-end">
                 <Button variant="outline" size="sm" onClick={handleReset} className="gap-2">
                     <RotateCcw className="h-4 w-4" />

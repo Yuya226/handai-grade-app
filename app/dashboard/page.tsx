@@ -10,6 +10,7 @@ import type { AggregateStats } from "@/lib/types";
 export default function Dashboard() {
     const [sessionId, setSessionId] = useState('');
     const [stats, setStats] = useState<AggregateStats | null>(null);
+    const [staleData, setStaleData] = useState(false);
 
     useEffect(() => {
         let id = localStorage.getItem('handai_session_id');
@@ -27,6 +28,11 @@ export default function Dashboard() {
         fetch(`/api/stats${gpaParam}`)
             .then(r => r.json())
             .then((s: AggregateStats) => setStats(s))
+            .catch(() => {});
+
+        fetch(`/api/session-info?session_id=${id}`)
+            .then(r => r.json())
+            .then(({ stale }: { stale: boolean }) => setStaleData(stale))
             .catch(() => {});
     }, []);
 
@@ -50,6 +56,7 @@ export default function Dashboard() {
                     stats={stats}
                     sessionId={sessionId}
                     onStatsUpdate={setStats}
+                    staleData={staleData}
                 />
             </main>
         </div>

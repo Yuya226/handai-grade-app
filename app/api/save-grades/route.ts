@@ -38,6 +38,7 @@ export async function POST(req: NextRequest) {
         session_id,
         faculty,
         subject_name: g.subject,
+        course_code: g.courseCode ?? null,
         grade: g.grade,
         credits: g.credits,
         year: g.year,
@@ -46,7 +47,7 @@ export async function POST(req: NextRequest) {
 
     const { error } = await supabase
         .from('grade_submissions')
-        .insert(rows);
+        .upsert(rows, { onConflict: 'session_id,subject_name,year,grade', ignoreDuplicates: true });
 
     if (error) {
         console.error('Supabase insert error:', error);

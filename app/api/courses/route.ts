@@ -19,27 +19,36 @@ export interface CourseResult {
     totalCount: number | null;
 }
 
+export interface CoursesResponse {
+    results: CourseResult[];
+    total: number;
+    yearCounts: Record<number, number>;
+}
+
 const MIN_COUNT = 1;
 
-/** grade_submissions 行から科目名ごとの成績分布を集計する */
+/** (course_code, year) をキーに成績分布を集計する。course_code がない場合は subject_name にフォールバック */
 function buildDistMap(
-    rows: { subject_name: string | null; grade: string | null; session_id?: string }[]
+    rows: { subject_name: string | null; course_code?: string | null; year?: number | null; grade: string | null; session_id?: string }[]
 ): Map<string, GradeDist & { total: number }> {
     const seen = new Set<string>();
     const map = new Map<string, GradeDist & { total: number }>();
     for (const row of rows) {
-        if (!row.subject_name || !row.grade) continue;
+        if (!row.grade) continue;
         if (!['S', 'A', 'B', 'C', 'F'].includes(row.grade)) continue;
-        // session_id がある場合は (session_id, subject_name) で重複除去
+        const key = row.course_code
+            ? `${row.course_code}-${row.year ?? ''}`
+            : row.subject_name;
+        if (!key) continue;
         if (row.session_id) {
-            const key = `${row.session_id}:${row.subject_name}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
+            const dedup = `${row.session_id}:${key}`;
+            if (seen.has(dedup)) continue;
+            seen.add(dedup);
         }
-        const entry = map.get(row.subject_name) ?? { S: 0, A: 0, B: 0, C: 0, F: 0, total: 0 };
+        const entry = map.get(key) ?? { S: 0, A: 0, B: 0, C: 0, F: 0, total: 0 };
         entry[row.grade as keyof GradeDist]++;
         entry.total++;
-        map.set(row.subject_name, entry);
+        map.set(key, entry);
     }
     return map;
 }
@@ -56,7 +65,7 @@ function toGradeDist(d: GradeDist & { total: number }): GradeDist {
 
 function attachDist(subjects: any[], distMap: Map<string, GradeDist & { total: number }>): CourseResult[] {
     return subjects.map(s => {
-        const d = distMap.get(s.name);
+        const d = (s.code ? distMap.get(`${s.code}-${s.year ?? ''}`) : null) ?? distMap.get(s.name);
         const hasData = d && d.total >= MIN_COUNT;
         return {
             ...s,
@@ -66,69 +75,102 @@ function attachDist(subjects: any[], distMap: Map<string, GradeDist & { total: n
     });
 }
 
+/** subjects の code と name の両方で grade_submissions をフェッチしてマージ */
+async function fetchGradeRowsForSubjects(
+    supabase: ReturnType<typeof import('@/lib/supabase').getSupabaseAdmin>,
+    subjects: { code: string | null; name: string }[]
+) {
+    const codes = [...new Set(subjects.map(s => s.code).filter((c): c is string => !!c))];
+    const names = [...new Set(subjects.map(s => s.name))];
+    const queries: Promise<{ data: any[] | null }>[] = [];
+    if (codes.length > 0) {
+        queries.push(
+            supabase.from('grade_submissions')
+                .select('subject_name, course_code, year, grade, session_id')
+                .in('course_code', codes) as any
+        );
+    }
+    if (names.length > 0) {
+        queries.push(
+            supabase.from('grade_submissions')
+                .select('subject_name, course_code, year, grade, session_id')
+                .in('subject_name', names) as any
+        );
+    }
+    const results = await Promise.all(queries);
+    return results.flatMap(r => r.data ?? []);
+}
+
+function saRate(s: any, distMap: Map<string, GradeDist & { total: number }>): number {
+    const d = (s.code ? distMap.get(`${s.code}-${s.year ?? ''}`) : null) ?? distMap.get(s.name);
+    return d && d.total > 0 ? (d.S + d.A) / d.total : -1;
+}
+
+function applySort(subjects: any[], sort: string, distMap: Map<string, GradeDist & { total: number }>): any[] {
+    return [...subjects].sort((a, b) => {
+        if (sort === 'year_desc') return (b.year ?? 0) - (a.year ?? 0);
+        if (sort === 'year_asc')  return (a.year ?? 0) - (b.year ?? 0);
+        return saRate(b, distMap) - saRate(a, distMap);
+    });
+}
+
 export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const q = searchParams.get('q')?.trim() ?? '';
     const limit = Math.min(parseInt(searchParams.get('limit') ?? '30'), 100);
+    const page = Math.max(0, parseInt(searchParams.get('page') ?? '0'));
+    const offset = page * limit;
+    const yearParam = searchParams.get('year');
+    const yearFilter = yearParam ? parseInt(yearParam) : null;
+    const sort = searchParams.get('sort') ?? 'sa_rate';
 
     const supabase = getSupabaseAdmin();
+    let allSubjects: any[];
+    let distMap: Map<string, GradeDist & { total: number }>;
 
-    // ── デフォルト: q なし → 成績データがある科目を件数順に返す ──────────────
-    if (!q) {
+    if (q) {
+        // ── 検索: subjects から引いて成績を付与 ──────────────────────────────
+        const isCodeQuery = /^\d+$/.test(q);
+        let sq = supabase
+            .from('subjects')
+            .select('id, code, name, category, credits, teacher, semester, source, year');
+        sq = isCodeQuery ? sq.ilike('code', `${q}%`) : sq.ilike('name', `%${q}%`);
+        const { data } = await sq;
+        allSubjects = data ?? [];
+        distMap = buildDistMap(await fetchGradeRowsForSubjects(supabase, allSubjects));
+    } else {
+        // ── デフォルト: grade_submissions から引いて成績データのある科目のみ ──
         const { data: gradeRows } = await supabase
             .from('grade_submissions')
-            .select('subject_name, grade, session_id');
+            .select('subject_name, course_code, year, grade, session_id');
+        distMap = buildDistMap(gradeRows ?? []);
+        if (distMap.size === 0) return NextResponse.json({ results: [], total: 0, yearCounts: {} });
 
-        const distMap = buildDistMap(gradeRows ?? []);
-        if (distMap.size === 0) return NextResponse.json([]);
-
-        // 件数順 top N の科目名を取得
-        const topNames = [...distMap.entries()]
-            .filter(([, d]) => d.total >= MIN_COUNT)
-            .sort((a, b) => b[1].total - a[1].total)
-            .slice(0, limit)
-            .map(([name]) => name);
-
-        const { data: subjects } = await supabase
+        const hasDataSet = new Set(
+            [...distMap.entries()]
+                .filter(([, d]) => d.total >= MIN_COUNT)
+                .map(([key]) => key)
+        );
+        const codes = [...new Set((gradeRows ?? []).map(r => r.course_code).filter((c): c is string => !!c))];
+        const { data } = await supabase
             .from('subjects')
             .select('id, code, name, category, credits, teacher, semester, source, year')
-            .in('name', topNames)
-            .order('year', { ascending: false, nullsFirst: false });
-
-        return NextResponse.json(attachDist(subjects ?? [], distMap));
+            .in('code', codes);
+        allSubjects = (data ?? []).filter(s => hasDataSet.has(`${s.code}-${s.year ?? ''}`));
     }
 
-    // ── 検索: 科目名 or コード前方一致 ────────────────────────────────────────
-    const isCodeQuery = /^\d+$/.test(q);
+    if (!allSubjects.length) return NextResponse.json({ results: [], total: 0, yearCounts: {} });
 
-    let query = supabase
-        .from('subjects')
-        .select('id, code, name, category, credits, teacher, semester, source, year');
-
-    if (isCodeQuery) {
-        query = query.ilike('code', `${q}%`).limit(limit);
-    } else {
-        query = query.ilike('name', `%${q}%`).limit(limit);
+    // ── 共通: 年度カウント → 年度フィルター → ソート → ページネーション ──────
+    const yearCounts: Record<number, number> = {};
+    for (const s of allSubjects) {
+        if (s.year) yearCounts[s.year] = (yearCounts[s.year] ?? 0) + 1;
     }
 
-    query = query
-        .order('year', { ascending: false, nullsFirst: false })
-        .order('code', { ascending: true, nullsFirst: false });
+    const filtered = yearFilter ? allSubjects.filter(s => s.year === yearFilter) : allSubjects;
+    const sorted = applySort(filtered, sort, distMap);
+    const total = sorted.length;
+    const page_results = sorted.slice(offset, offset + limit);
 
-    const { data: subjects, error } = await query;
-
-    if (error) {
-        console.error('subjects search error:', error);
-        return NextResponse.json({ error: 'DB error' }, { status: 500 });
-    }
-    if (!subjects || subjects.length === 0) return NextResponse.json([]);
-
-    const subjectNames = [...new Set(subjects.map(s => s.name))];
-    const { data: gradeRows } = await supabase
-        .from('grade_submissions')
-        .select('subject_name, grade, session_id')
-        .in('subject_name', subjectNames);
-
-    const distMap = buildDistMap(gradeRows ?? []);
-    return NextResponse.json(attachDist(subjects, distMap));
+    return NextResponse.json({ results: attachDist(page_results, distMap), total, yearCounts });
 }

@@ -22,8 +22,8 @@ dotenv.config({ path: path.resolve(__dirname, '../.env.local') });
 import { createClient } from '@supabase/supabase-js';
 import * as fs from 'fs';
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').replace(/^"|"$/g, '');
+const SUPABASE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').replace(/^"|"$/g, '');
 
 if (!SUPABASE_URL || !SUPABASE_KEY) {
     console.error('Error: NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set.');
@@ -34,7 +34,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
 });
 
-const DATA_DIR = path.resolve(__dirname, '../../../../シラバスデータ/parse_pdf.py');
+const DATA_DIR = path.resolve(__dirname, '../../シラバスデータ/parse_pdf.py');
 const YEARS = [2024, 2025, 2026] as const;
 type Year = typeof YEARS[number];
 

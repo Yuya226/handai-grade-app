@@ -64,35 +64,6 @@ export async function validateAndEnrichGrades(grades: Grade[]): Promise<Grade[]>
         return undefined;
     }
 
-    // 3. DB に (code, year) が存在しない場合のみ INSERT（source='ocr'）
-    const newRows: Omit<Subject, 'id'>[] = [];
-    const seen = new Set<string>();
-
-    for (const grade of grades) {
-        if (!isValidCode(grade.courseCode)) continue;
-        const key = `${grade.courseCode}-${grade.year}`;
-        const found = findSubject(grade);
-        if (found && !('categoryOnly' in found)) continue; // exactMapに存在する
-        if (seen.has(key)) continue;
-        seen.add(key);
-        newRows.push({
-            code:     grade.courseCode!,
-            name:     grade.subject,
-            category: null,
-            credits:  grade.credits,
-            teacher:  grade.teacher !== 'Unknown' ? grade.teacher : null,
-            semester: grade.semester || null,
-            source:   'ocr',
-            year:     grade.year,
-        });
-    }
-
-    if (newRows.length > 0) {
-        await supabase
-            .from('subjects')
-            .upsert(newRows, { onConflict: 'code,year', ignoreDuplicates: true });
-    }
-
     // デバッグ: OCR解析科目 ↔ DB照合結果を出力
     console.log('\n=== 科目照合結果 ===');
     for (const grade of grades) {

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { RotateCcw } from "lucide-react";
 import type { AnalysisResult, AggregateStats, Faculty, Grade } from "@/lib/types";
 import { calculateGPA } from "@/lib/gpa";
+import { TOTAL_REQUIRED_CREDITS } from "@/lib/requirements";
 import GradeReview from "@/components/dashboard/GradeReview";
 import UploadPanel from "@/components/dashboard/UploadPanel";
 import GpaDeviationCard from "@/components/dashboard/GpaDeviationCard";
@@ -46,9 +47,9 @@ export default function GradeAnalysis({ stats, sessionId, onStatsUpdate, staleDa
             gpa: { cumulative, semesters },
             earnedCredits,
             graduationRequirement: {
-                total: 130,
+                total: TOTAL_REQUIRED_CREDITS,
                 current: earnedCredits,
-                percentage: Math.round((earnedCredits / 130) * 100),
+                percentage: Math.round((earnedCredits / TOTAL_REQUIRED_CREDITS) * 100),
             },
         };
         setAnalysisData(result);

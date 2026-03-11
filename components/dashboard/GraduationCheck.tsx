@@ -7,7 +7,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { Grade } from "@/lib/types";
-import { calcEconProgress, gradeKey, ECON_2025, type CategoryProgress } from "@/lib/requirements";
+import { calcEconProgress, gradeKey, ECON_2025, TOTAL_REQUIRED_CREDITS, type CategoryProgress } from "@/lib/requirements";
 
 // ── グレードバッジの色 ────────────────────────────────────────────────────────
 const GRADE_COLOR: Record<string, string> = {
@@ -187,8 +187,8 @@ export default function GraduationCheck({ grades }: { grades: Grade[] }) {
     const [overrides, setOverrides] = useState<Record<string, string>>({});
     const progress = calcEconProgress(grades, overrides);
 
-    const overallPct = Math.min((progress.totalEarned / 130) * 100, 100);
-    const remaining = Math.max(0, 130 - progress.totalEarned);
+    const overallPct = Math.min((progress.totalEarned / TOTAL_REQUIRED_CREDITS) * 100, 100);
+    const remaining = Math.max(0, TOTAL_REQUIRED_CREDITS - progress.totalEarned);
 
     const allAutoFulfilled =
         progress.byCategory.filter(c => !c.category.manualCheck).every(c => c.fulfilled)

@@ -64,22 +64,6 @@ export async function validateAndEnrichGrades(grades: Grade[]): Promise<Grade[]>
         return undefined;
     }
 
-    // デバッグ: OCR解析科目 ↔ DB照合結果を出力
-    console.log('\n=== 科目照合結果 ===');
-    for (const grade of grades) {
-        const found = findSubject(grade);
-        const isExact = found && !('categoryOnly' in found);
-        console.log({
-            ocr_name:    grade.subject,
-            ocr_code:    grade.courseCode ?? null,
-            ocr_year:    grade.year,
-            match:       !found ? 'none' : isExact ? 'exact' : 'category-only',
-            db_name:     isExact ? (found as Subject).name : null,
-            db_category: found ? (isExact ? (found as Subject).category : (found as { categoryOnly: string | null }).categoryOnly) : null,
-        });
-    }
-    console.log('===================\n');
-
     // 4. grades を DB 値で補完
     //    完全一致: name / credits / category すべて上書き
     //    categoryのみ一致: category だけ補完（OCR の科目名・単位数を維持）

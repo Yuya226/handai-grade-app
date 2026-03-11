@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Grade, AnalysisResult } from '@/lib/types';
 import { calculateGPA } from '@/lib/gpa';
 import { validateAndEnrichGrades } from '@/lib/subjects';
+import { TOTAL_REQUIRED_CREDITS } from '@/lib/requirements';
 
 export async function POST(req: NextRequest) {
     try {
@@ -18,9 +19,9 @@ export async function POST(req: NextRequest) {
             gpa: { cumulative, semesters },
             earnedCredits,
             graduationRequirement: {
-                total: 130,
+                total: TOTAL_REQUIRED_CREDITS,
                 current: earnedCredits,
-                percentage: Math.round((earnedCredits / 130) * 100),
+                percentage: Math.round((earnedCredits / TOTAL_REQUIRED_CREDITS) * 100),
             },
         };
 

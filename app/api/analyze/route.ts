@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ImageAnnotatorClient } from '@google-cloud/vision';
+import { ImageAnnotatorClient, protos } from '@google-cloud/vision';
+
+type IEntityAnnotation = protos.google.cloud.vision.v1.IEntityAnnotation;
+
 // Initialize Google Cloud Vision Client
 const client = new ImageAnnotatorClient({
     credentials: {
@@ -8,11 +11,6 @@ const client = new ImageAnnotatorClient({
         project_id: process.env.GOOGLE_PROJECT_ID,
     },
 });
-
-// Annotations Helper
-interface Vertex { x: number; y: number; }
-interface BoundingPoly { vertices: Vertex[]; }
-interface EntityAnnotation { description: string; boundingPoly: BoundingPoly; }
 
 interface ParsedLine {
     words: { text: string, x: number, y: number, width: number }[];
@@ -25,6 +23,7 @@ import { calculateGPA } from '@/lib/gpa';
 import { validateAndEnrichGrades } from '@/lib/subjects';
 import { inferCredits } from '@/lib/credits';
 import { normalizeGradeOCR } from '@/lib/grades';
+import { TOTAL_REQUIRED_CREDITS } from '@/lib/requirements';
 
 function inferSemester(lineStr: string): string {
     if (/前学期|前期|春学期|春〜夏学期/.test(lineStr)) return '前期';
@@ -34,19 +33,19 @@ function inferSemester(lineStr: string): string {
 }
 
 
-function reconstructLinesFromAnnotations(annotations: any[]): ParsedLine[] {
+function reconstructLinesFromAnnotations(annotations: IEntityAnnotation[]): ParsedLine[] {
     // Skip index 0 (full text)
     const words = annotations.slice(1).map(a => {
         const vertices = a.boundingPoly?.vertices || [];
         if (vertices.length < 4) return null;
 
         return {
-            text: a.description,
+            text: a.description ?? '',
             // Calculate mid-Y for grouping
-            y: (vertices[0].y + vertices[2].y) / 2,
+            y: ((vertices[0].y ?? 0) + (vertices[2].y ?? 0)) / 2,
             // X for sorting and column detection
-            x: vertices[0].x,
-            width: vertices[1].x - vertices[0].x
+            x: vertices[0].x ?? 0,
+            width: (vertices[1].x ?? 0) - (vertices[0].x ?? 0),
         };
     }).filter(w => w !== null) as { text: string, x: number, y: number, width: number }[];
 
@@ -119,20 +118,20 @@ function splitMixedLines(lines: ParsedLine[]): ParsedLine[] {
 const INFO_LINE_RE = /^(リーディング|高度教養|修得年度)/;
 
 // Coordinate-based Parser — supports both PC and mobile KOAN layouts
-function parseOCRText(annotations: any[]): Grade[] {
+function parseOCRText(annotations: IEntityAnnotation[]): Grade[] {
     let lines = reconstructLinesFromAnnotations(annotations);
     lines = splitMixedLines(lines);
     const grades: Grade[] = [];
 
     // Raw annotation words for mobile right-column grade lookup
-    const rawWords = annotations.slice(1).map((a: any) => {
+    const rawWords = annotations.slice(1).map((a) => {
         const verts = a.boundingPoly?.vertices ?? [];
         if (verts.length < 4) return null;
         return {
-            text: a.description as string,
-            y: (verts[0].y + verts[2].y) / 2,
-            x: verts[0].x as number,
-            width: (verts[1].x - verts[0].x) as number,
+            text: a.description ?? '',
+            y: ((verts[0].y ?? 0) + (verts[2].y ?? 0)) / 2,
+            x: verts[0].x ?? 0,
+            width: (verts[1].x ?? 0) - (verts[0].x ?? 0),
         };
     }).filter(Boolean) as { text: string; x: number; y: number; width: number }[];
 
@@ -241,7 +240,6 @@ function parseOCRText(annotations: any[]): Grade[] {
             if (cw && yw) isMobile = yw.x < cw.x;
         }
     }
-    console.log(`[analyze] format: ${isMobile ? 'mobile' : 'PC'}, anchors: ${anchorIndices.length}`);
 
     // ── parse ────────────────────────────────────────────────────────────────
 
@@ -337,11 +335,6 @@ export async function POST(req: NextRequest) {
         }
 
         parsedGrades = parseOCRText(detections);
-        console.log("Parsed Grades Count (OCR):", parsedGrades.length);
-
-        if (parsedGrades.length === 0) {
-            console.log("Parsing failed to find any grades. Check regex against detected text.");
-        }
 
         // subjects テーブルと照合・補完（科目名・単位数の正規化）
         parsedGrades = await validateAndEnrichGrades(parsedGrades);
@@ -356,9 +349,9 @@ export async function POST(req: NextRequest) {
             },
             earnedCredits: earnedCredits,
             graduationRequirement: {
-                total: 130,
+                total: TOTAL_REQUIRED_CREDITS,
                 current: earnedCredits,
-                percentage: Math.round((earnedCredits / 130) * 100),
+                percentage: Math.round((earnedCredits / TOTAL_REQUIRED_CREDITS) * 100),
             }
         };
 

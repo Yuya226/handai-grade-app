@@ -13,9 +13,11 @@ export interface GradCategory {
     manualCheck?: boolean;
 }
 
+/** 総卒業必要単位数（経済学部 2025年度以降入学者） */
+export const TOTAL_REQUIRED_CREDITS = 130;
+
 /**
  * 大阪大学 経済学部 2025年度以降入学者 卒業要件
- * 総卒業必要単位数: 130単位
  * 出典: 令和7(2025)年度経済学部学生便覧
  */
 export const ECON_2025: GradCategory[] = [
@@ -51,7 +53,6 @@ export const ECON_2025: GradCategory[] = [
         group: 'A', groupLabel: '教養教育系',
         label: '健康・スポーツ教育',
         minCredits: 2,
-        note: 'スマート・スポーツリテラシー or スマート・ヘルスリテラシー',
     },
     {
         id: 'adv_lib',
@@ -278,5 +279,5 @@ export function calcEconProgress(
 
     const totalEarned = passed.reduce((sum, g) => sum + g.credits, 0);
 
-    return { totalRequired: 130, totalEarned, byCategory, unclassified };
+    return { totalRequired: TOTAL_REQUIRED_CREDITS, totalEarned, byCategory, unclassified };
 }

@@ -39,9 +39,9 @@ export default function StatsPanel({ analysisData, stats, faculty }: Props) {
         : [];
 
     return (
-        <div className="grid md:grid-cols-2 gap-5">
-            {/* 左カラム: 学科別GPA + 個人成績 */}
-            <div className="space-y-5">
+        <div className="space-y-5">
+            {/* 上段: 学科別GPA + 個人成績 */}
+            <div className="grid md:grid-cols-2 gap-5">
                 {facultyGpas.length > 0 && (
                     <Card>
                         <CardHeader className="pb-3">
@@ -94,41 +94,40 @@ export default function StatsPanel({ analysisData, stats, faculty }: Props) {
                 </div>
             </div>
 
-            {/* 右カラム: 評価分布 + 卒業要件 */}
-            <div className="space-y-5">
-                <Card>
-                    <CardHeader>
-                        <CardTitle className="text-sm font-medium">評価分布</CardTitle>
-                        <CardDescription>S / A / B / C / F の取得数</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        <ResponsiveContainer width="100%" height={220}>
-                            <BarChart data={gradeDist}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                                <XAxis dataKey="grade" stroke="#888888" fontSize={12} tickLine={false} axisLine={false} />
-                                <Tooltip cursor={{ fill: 'transparent' }} />
-                                <Bar dataKey="count" radius={[4, 4, 0, 0]}>
-                                    {gradeDist.map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={entry.color} />
-                                    ))}
-                                </Bar>
-                            </BarChart>
-                        </ResponsiveContainer>
-                    </CardContent>
-                </Card>
+            {/* 下段左: 評価分布 */}
+            <Card>
+                <CardHeader>
+                    <CardTitle className="text-sm font-medium">評価分布</CardTitle>
+                    <CardDescription>S / A / B / C / F の取得数</CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <ResponsiveContainer width="100%" height={220}>
+                        <BarChart data={gradeDist}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                            <XAxis dataKey="grade" stroke="#888888" fontSize={12} tickLine={false} axisLine={false} />
+                            <Tooltip cursor={{ fill: 'transparent' }} />
+                            <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                                {gradeDist.map((entry, index) => (
+                                    <Cell key={`cell-${index}`} fill={entry.color} />
+                                ))}
+                            </Bar>
+                        </BarChart>
+                    </ResponsiveContainer>
+                </CardContent>
+            </Card>
 
-                {faculty === '経済学部' ? (
-                    <GraduationCheck grades={analysisData.grades} />
-                ) : (
-                    <div className="rounded-xl border bg-card px-4 py-5 text-center space-y-1">
-                        <p className="text-sm font-semibold text-muted-foreground">卒業要件チェック</p>
-                        <p className="text-xs text-muted-foreground">
-                            {faculty ? `${faculty}は未対応です。` : '学部未選択のため表示できません。'}
-                            現在、経済学部のみ対応しています。
-                        </p>
-                    </div>
-                )}
-            </div>
+            {/* 下段: 卒業要件（全幅） */}
+            {faculty === '経済学部' ? (
+                <GraduationCheck grades={analysisData.grades} />
+            ) : (
+                <div className="rounded-xl border bg-card px-4 py-5 text-center space-y-1">
+                    <p className="text-sm font-semibold text-muted-foreground">卒業要件チェック</p>
+                    <p className="text-xs text-muted-foreground">
+                        {faculty ? `${faculty}は未対応です。` : '学部未選択のため表示できません。'}
+                        現在、経済学部のみ対応しています。
+                    </p>
+                </div>
+            )}
         </div>
     );
 }

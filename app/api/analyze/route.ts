@@ -24,6 +24,7 @@ import { validateAndEnrichGrades } from '@/lib/subjects';
 import { inferCredits } from '@/lib/credits';
 import { normalizeGradeOCR } from '@/lib/grades';
 import { TOTAL_REQUIRED_CREDITS } from '@/lib/requirements';
+import { checkRateLimit } from '@/lib/ratelimit';
 
 function inferSemester(lineStr: string): string {
     if (/前学期|前期|春学期|春〜夏学期/.test(lineStr)) return '前期';
@@ -314,6 +315,9 @@ function parseOCRText(annotations: IEntityAnnotation[]): Grade[] {
 
 
 export async function POST(req: NextRequest) {
+    const rateLimitRes = await checkRateLimit(req);
+    if (rateLimitRes) return rateLimitRes;
+
     try {
         const formData = await req.formData();
         const file = formData.get('file');

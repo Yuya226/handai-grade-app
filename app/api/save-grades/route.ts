@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import type { SubmissionPayload } from '@/lib/types';
+import { checkRateLimit } from '@/lib/ratelimit';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const WRITE_COOKIE = 'swt'; // session write token
@@ -23,6 +24,9 @@ function verifyWriteToken(sessionId: string, token: string): boolean {
 }
 
 export async function POST(req: NextRequest) {
+    const rateLimitRes = await checkRateLimit(req);
+    if (rateLimitRes) return rateLimitRes;
+
     let body: SubmissionPayload;
     try {
         body = await req.json();

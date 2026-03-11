@@ -3,8 +3,12 @@ import { Grade, AnalysisResult } from '@/lib/types';
 import { calculateGPA } from '@/lib/gpa';
 import { validateAndEnrichGrades } from '@/lib/subjects';
 import { TOTAL_REQUIRED_CREDITS } from '@/lib/requirements';
+import { checkRateLimit } from '@/lib/ratelimit';
 
 export async function POST(req: NextRequest) {
+    const rateLimitRes = await checkRateLimit(req);
+    if (rateLimitRes) return rateLimitRes;
+
     try {
         const body = await req.json() as { grades: Grade[] };
         if (!Array.isArray(body.grades) || body.grades.length === 0) {

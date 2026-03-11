@@ -1,7 +1,7 @@
 export interface Grade {
     subject: string;
     teacher: string;
-    semester: string;
+    semester: string | null;
     credits: number;
     grade: 'S' | 'A' | 'B' | 'C' | 'F' | 'P' | null; // null = OCRで成績未検出（レビューで要入力）
     year: number;

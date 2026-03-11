@@ -23,31 +23,8 @@ interface ParsedLine {
 import { Grade, AnalysisResult } from '@/lib/types';
 import { calculateGPA } from '@/lib/gpa';
 import { validateAndEnrichGrades } from '@/lib/subjects';
-
-// Map of course code prefix (first 2 chars) → credits
-// 専門科目は2単位または4単位だが、シラバスDBなしでは判別不可のため2単位デフォルト
-// 19（言語文化等）のみ1単位が確定
-const CREDIT_MAP: Record<string, number> = {
-    '00': 2, // 文学部
-    '01': 2, // 人間科学部
-    '02': 2, // 法学部
-    '03': 2, // 経済学部
-    '04': 2, // 理学部
-    '05': 2, // 医学部（医）
-    '0A': 2, // 医学部（保健）
-    '06': 2, // 歯学部
-    '07': 2, // 薬学部
-    '08': 2, // 工学部
-    '09': 2, // 基礎工学部
-    '10': 2, // 外国語学部
-    '13': 2, // 全学教育推進機構（共通教育）
-    '19': 1, // 全学教育推進機構（言語文化等）→ 1単位確定
-};
-
-function inferCredits(courseCode: string): number {
-    const prefix = courseCode.substring(0, 2);
-    return CREDIT_MAP[prefix] ?? 2;
-}
+import { inferCredits } from '@/lib/credits';
+import { normalizeGradeOCR } from '@/lib/grades';
 
 function inferSemester(lineStr: string): string {
     if (/前学期|前期|春学期|春〜夏学期/.test(lineStr)) return '前期';
@@ -55,26 +32,6 @@ function inferSemester(lineStr: string): string {
     if (/通年/.test(lineStr)) return '通年';
     return '前期';
 }
-
-function normalizeGrade(rawGrade: string): Grade['grade'] | null {
-    // Handle OCR-merged tokens: grade letter immediately followed by 合 kanji
-    // e.g., 'B合' → 'B', 'S合' → 'S' (OCR sometimes merges adjacent cells)
-    const merged = /^([SABCFPsabcfp])合/.exec(rawGrade);
-    if (merged) return merged[1].toUpperCase() as Grade['grade'];
-
-    let g = rawGrade.trim().toUpperCase();
-    // OCR digit/letter confusion fixes
-    if (g === '8') g = 'B';  // 8 ↔ B
-    if (g === '6') g = 'S';  // 6 ↔ S
-    if (g === '5') g = 'S';  // 5 ↔ S
-    if (g === '0') g = 'C';  // 0 ↔ C
-    if (g === '4') g = 'A';  // 4 ↔ A
-
-    if (['S', 'A', 'B', 'C', 'F', 'P'].includes(g)) return g as Grade['grade'];
-    return null;
-}
-
-
 
 
 function reconstructLinesFromAnnotations(annotations: any[]): ParsedLine[] {
@@ -190,7 +147,7 @@ function parseOCRText(annotations: any[]): Grade[] {
             if (w.x < yearStartX) continue;
             if (w.text === '合' || w.text === '否') continue;
             if (w.text.length > 2 && !/^[SABCFPsabcfp]合/.test(w.text)) continue;
-            const g = normalizeGrade(w.text);
+            const g = normalizeGradeOCR(w.text);
             if (g) return g;
         }
         for (let i = line.words.length - 1; i >= 0; i--) {
@@ -210,7 +167,7 @@ function parseOCRText(annotations: any[]): Grade[] {
         for (const w of candidates) {
             if (w.text === '合' || w.text === '否') continue;
             if (w.text.length > 2 && !/^[SABCFPsabcfp]合/.test(w.text)) continue;
-            const g = normalizeGrade(w.text);
+            const g = normalizeGradeOCR(w.text);
             if (g) return g;
         }
         // Fallback: 合 → P (P/F課 shows 合 in grade column; button also shows 合)

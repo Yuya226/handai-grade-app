@@ -1,15 +1,6 @@
 import type { Grade } from './types';
-
-const CREDIT_MAP: Record<string, number> = {
-    '00': 2, '01': 2, '02': 2, '03': 2, '04': 2,
-    '05': 2, '0A': 2, '06': 2, '07': 2, '08': 2,
-    '09': 2, '10': 2, '13': 2, '19': 1,
-};
-
-function inferCredits(courseCode: string): number {
-    const prefix = courseCode.substring(0, 2);
-    return CREDIT_MAP[prefix] ?? 2;
-}
+import { inferCredits } from './credits';
+import { normalizeGradeCSV } from './grades';
 
 function parseCSVLine(line: string): string[] {
     const fields: string[] = [];
@@ -36,14 +27,6 @@ function parseCSVLine(line: string): string[] {
     return fields;
 }
 
-function normalizeGrade(raw: string): Grade['grade'] {
-    const normalized = raw.normalize('NFKC').toUpperCase().trim();
-    if (normalized === '合') return 'P';
-    if (['S', 'A', 'B', 'C', 'F', 'P'].includes(normalized)) {
-        return normalized as Grade['grade'];
-    }
-    return null;
-}
 
 /**
  * KOAN からエクスポートした Shift-JIS CSV を Grade[] に変換する。
@@ -80,13 +63,13 @@ export function parseKoanCSV(buffer: ArrayBuffer): Grade[] {
         const year = parseInt(yearStr, 10);
         if (!Number.isFinite(year)) continue;
 
-        const grade   = normalizeGrade(gradeRaw ?? '');
+        const grade   = normalizeGradeCSV(gradeRaw ?? '');
         const credits = inferCredits(courseCode);
 
         grades.push({
             subject,
             teacher,
-            semester: '前期',
+            semester: null,
             credits,
             grade,
             year,

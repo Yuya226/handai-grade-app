@@ -10,7 +10,7 @@ import { calculateGPA } from "@/lib/gpa";
 import type { Grade, AnalysisResult } from "@/lib/types";
 
 const GRADE_OPTIONS = ["S", "A", "B", "C", "F", "P"] as const;
-const SEMESTER_OPTIONS = ["前期", "後期", "通年"];
+const SEMESTER_OPTIONS = ["", "前期", "後期", "通年"] as const;
 
 const GRADE_COLORS: Record<string, string> = {
     S: "text-green-600",
@@ -162,12 +162,12 @@ export default function CoursesPage() {
                                         </td>
                                         <td className="px-4 py-2">
                                             <select
-                                                value={g.semester}
+                                                value={g.semester ?? ''}
                                                 onChange={(e) => updateGrade(idx, "semester", e.target.value)}
                                                 className="bg-transparent border-b border-transparent hover:border-border focus:border-primary focus:outline-none py-0.5"
                                             >
                                                 {SEMESTER_OPTIONS.map((s) => (
-                                                    <option key={s} value={s}>{s}</option>
+                                                    <option key={s} value={s}>{s || '不明'}</option>
                                                 ))}
                                             </select>
                                         </td>

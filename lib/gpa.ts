@@ -27,7 +27,7 @@ export function calculateGPA(grades: Grade[]) {
             totalCredits += credits;
         }
 
-        const semKey = `${g.year} ${g.semester}`;
+        const semKey = `${g.year} ${g.semester ?? '不明'}`;
         if (!semesterPoints[semKey]) {
             semesterPoints[semKey] = 0;
             semesterCredits[semKey] = 0;

@@ -1,105 +1,55 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase';
-import type { AggregateStats, HardCourse } from '@/lib/types';
+import type { AggregateStats } from '@/lib/types';
+
+// Module-level cache (survives across requests within the same serverless instance).
+// Only used for non-personalized responses (no gpa param) to avoid stale percentiles.
+let cachedStats: AggregateStats | null = null;
+let cacheTs = 0;
+const CACHE_TTL = 60_000; // 60 s
+
+const EMPTY: AggregateStats = {
+    totalParticipants: 0,
+    collectionRate: 0,
+    averageGpa: 0,
+    stdDev: 0,
+    userPercentile: 50,
+    facultyBreakdown: {},
+    facultyGpaBreakdown: {},
+    hardCourses: [],
+};
 
 export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const userGpa = parseFloat(searchParams.get('gpa') ?? 'NaN');
+    const personalized = !isNaN(userGpa);
 
-    const { data, error } = await getSupabaseAdmin()
-        .from('grade_submissions')
-        .select('session_id, faculty, session_gpa, subject_name, grade');
+    // Return cached result for non-personalized requests when cache is warm.
+    if (!personalized && cachedStats && Date.now() - cacheTs < CACHE_TTL) {
+        return NextResponse.json(cachedStats, {
+            headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300' },
+        });
+    }
+
+    const { data, error } = await getSupabaseAdmin().rpc('get_aggregate_stats', {
+        user_gpa: personalized ? userGpa : null,
+    });
 
     if (error) {
-        console.error('Supabase stats error:', error);
+        console.error('Supabase stats RPC error:', error);
         return NextResponse.json({ error: 'DB error' }, { status: 500 });
     }
 
-    if (!data || data.length === 0) {
-        const empty: AggregateStats = {
-            totalParticipants: 0,
-            collectionRate: 0,
-            averageGpa: 0,
-            stdDev: 0,
-            userPercentile: 50,
-            facultyBreakdown: {},
-            facultyGpaBreakdown: {},
-            hardCourses: [],
-        };
-        return NextResponse.json(empty);
+    const stats: AggregateStats = data?.totalParticipants ? data : EMPTY;
+
+    if (!personalized) {
+        cachedStats = stats;
+        cacheTs = Date.now();
     }
 
-    // Deduplicate by session_id (keep one row per session for GPA stats)
-    const sessionMap = new Map<string, { faculty: string; gpa: number }>();
-    for (const row of data) {
-        if (!sessionMap.has(row.session_id)) {
-            sessionMap.set(row.session_id, { faculty: row.faculty, gpa: row.session_gpa });
-        }
-    }
+    const cacheControl = personalized
+        ? 'private, no-store'
+        : 'public, s-maxage=60, stale-while-revalidate=300';
 
-    const sessions = Array.from(sessionMap.values());
-    const totalParticipants = sessions.length;
-    const averageGpa = sessions.reduce((sum, s) => sum + s.gpa, 0) / totalParticipants;
-    const variance = sessions.reduce((sum, s) => sum + Math.pow(s.gpa - averageGpa, 2), 0) / totalParticipants;
-    const stdDev = Math.sqrt(variance);
-
-    // Faculty participant counts
-    const facultyBreakdown: Record<string, number> = {};
-    for (const s of sessions) {
-        facultyBreakdown[s.faculty] = (facultyBreakdown[s.faculty] ?? 0) + 1;
-    }
-
-    // Faculty GPA averages
-    const facultyGpaSum: Record<string, { sum: number; count: number }> = {};
-    for (const s of sessions) {
-        if (!facultyGpaSum[s.faculty]) facultyGpaSum[s.faculty] = { sum: 0, count: 0 };
-        facultyGpaSum[s.faculty].sum += s.gpa;
-        facultyGpaSum[s.faculty].count += 1;
-    }
-    const facultyGpaBreakdown: Record<string, number> = {};
-    for (const [faculty, { sum, count }] of Object.entries(facultyGpaSum)) {
-        facultyGpaBreakdown[faculty] = Math.round((sum / count) * 100) / 100;
-    }
-
-    // Hard courses: compute F rate per subject
-    // session_id+subject_name で重複除去（同一人物の再アップロード対策）
-    const seenCourseKeys = new Set<string>();
-    const courseStats: Record<string, { total: number; fails: number }> = {};
-    for (const row of data) {
-        if (!row.subject_name || !row.grade) continue;
-        const key = `${row.session_id}:${row.subject_name}`;
-        if (seenCourseKeys.has(key)) continue;
-        seenCourseKeys.add(key);
-        if (!courseStats[row.subject_name]) courseStats[row.subject_name] = { total: 0, fails: 0 };
-        courseStats[row.subject_name].total++;
-        if (row.grade === 'F') courseStats[row.subject_name].fails++;
-    }
-    const hardCourses: HardCourse[] = Object.entries(courseStats)
-        .filter(([_, s]) => s.total >= 3)
-        .map(([subject_name, s]) => ({
-            subject_name,
-            failRate: Math.round((s.fails / s.total) * 100) / 100,
-            totalCount: s.total,
-        }))
-        .sort((a, b) => b.failRate - a.failRate)
-        .slice(0, 10);
-
-    let userPercentile = 50;
-    if (!isNaN(userGpa)) {
-        const belowOrEqual = sessions.filter((s) => s.gpa <= userGpa).length;
-        userPercentile = 100 - Math.round((belowOrEqual / totalParticipants) * 100);
-    }
-
-    const stats: AggregateStats = {
-        totalParticipants,
-        collectionRate: totalParticipants / 15000,
-        averageGpa: Math.round(averageGpa * 100) / 100,
-        stdDev: Math.round(stdDev * 1000) / 1000,
-        userPercentile,
-        facultyBreakdown,
-        facultyGpaBreakdown,
-        hardCourses,
-    };
-
-    return NextResponse.json(stats);
+    return NextResponse.json(stats, { headers: { 'Cache-Control': cacheControl } });
 }

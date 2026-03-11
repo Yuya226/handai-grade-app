@@ -95,6 +95,7 @@ export async function validateAndEnrichGrades(grades: Grade[]): Promise<Grade[]>
             subject:  subject.name,
             credits:  subject.credits ?? grade.credits,
             category: subject.category ?? grade.category ?? null,
+            semester: subject.semester ?? grade.semester,
         };
     });
 }
